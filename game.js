@@ -7,6 +7,7 @@ const startButton = document.getElementById('startButton');
 let audioCtx = null;
 let bgmNode = null; // Holds active BGM oscillators
 let currentBgmMode = null;
+let masterVolume = 0.7; // Master volume setting (0.0 to 1.0)
 
 // Initialize audio context (needs user interaction)
 function initAudio() {
@@ -31,7 +32,7 @@ function playShootSound() {
     oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
     oscillator.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.1);
 
-    gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0.12 * masterVolume, audioCtx.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
 
     oscillator.start(audioCtx.currentTime);
@@ -58,7 +59,7 @@ function playExplosionSound() {
     noiseSource.buffer = noiseBuffer;
     noiseSource.connect(gainNode);
 
-    gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0.25 * masterVolume, audioCtx.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
 
     noiseSource.start(audioCtx.currentTime);
@@ -82,7 +83,7 @@ function playPowerUpSound() {
     oscillator.frequency.setValueAtTime(600, audioCtx.currentTime);
     oscillator.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.2);
 
-    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0.3 * masterVolume, audioCtx.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
 
     oscillator.start(audioCtx.currentTime);
@@ -107,7 +108,7 @@ function playComboUpSound() {
     oscillator.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
     oscillator.frequency.exponentialRampToValueAtTime(baseFreq * 1.5, audioCtx.currentTime + 0.15);
 
-    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0.2 * masterVolume, audioCtx.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
 
     oscillator.start(audioCtx.currentTime);
@@ -166,12 +167,12 @@ function startBGM(mode = 'stage0', immediate = false) {
 
   const settings = BGM_SETTINGS[mode] || BGM_SETTINGS.stage0;
   const gainNode = audioCtx.createGain();
-  const initialVolume = immediate ? settings.volume : 0;
+  const initialVolume = immediate ? settings.volume * masterVolume : 0;
   gainNode.gain.setValueAtTime(initialVolume, audioCtx.currentTime);
   gainNode.connect(audioCtx.destination);
 
   if (!immediate) {
-    gainNode.gain.linearRampToValueAtTime(settings.volume, audioCtx.currentTime + 1.5);
+    gainNode.gain.linearRampToValueAtTime(settings.volume * masterVolume, audioCtx.currentTime + 1.5);
   }
 
   const bass = audioCtx.createOscillator();
@@ -279,6 +280,7 @@ const enemyBullets = [];
 const powerUps = [];
 const stars = [];
 const explosions = [];
+const particles = [];
 
 const BULLET_WIDTH = 6;
 const BULLET_HEIGHT = 12;
@@ -533,10 +535,24 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'p' || e.key === 'P') {
     if (gameState === 'playing') {
       gameState = 'paused';
-      if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume * 0.3, audioCtx.currentTime);
+      if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume * masterVolume * 0.3, audioCtx.currentTime);
     } else if (gameState === 'paused') {
       gameState = 'playing';
-      if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume, audioCtx.currentTime);
+      if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume * masterVolume, audioCtx.currentTime);
+    }
+  }
+
+  // Volume controls
+  if (e.key === '=' || e.key === '+') {
+    masterVolume = Math.min(1.0, masterVolume + 0.1);
+    if (bgmNode && gameState === 'playing') {
+      bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume * masterVolume, audioCtx.currentTime);
+    }
+  }
+  if (e.key === '-' || e.key === '_') {
+    masterVolume = Math.max(0.0, masterVolume - 0.1);
+    if (bgmNode && gameState === 'playing') {
+      bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume * masterVolume, audioCtx.currentTime);
     }
   }
 
@@ -723,6 +739,7 @@ function handlePowerUpCollection() {
 
     if (rectsIntersect(bounds, player)) {
       applyPowerUp(powerUp.type);
+      createPowerUpParticles(powerUp.x, powerUp.y, powerUp.type);
       powerUps.splice(i, 1);
     }
   }
@@ -887,6 +904,7 @@ function gameLoop() {
         updatePowerUps();
         handlePowerUpCollection();
         updateExplosions(delta);
+        updateParticles(delta);
         handleCollisions();
 
         drawPlayer();
@@ -895,6 +913,7 @@ function gameLoop() {
         drawEnemies();
         drawPowerUps();
         drawExplosions();
+        drawParticles();
         drawHUD();
         drawAnnouncements();
         break;
@@ -906,13 +925,16 @@ function gameLoop() {
         drawEnemies();
         drawPowerUps();
         drawExplosions();
+        drawParticles();
         drawHUD();
         drawPaused();
         break;
 
       case 'gameOver':
         updateExplosions(delta);
+        updateParticles(delta);
         drawExplosions();
+        drawParticles();
         drawGameOver();
         break;
 
@@ -1381,6 +1403,83 @@ function updateEnemyBullets() {
   }
 }
 
+// Particle system for enhanced explosion effects
+function createExplosionParticles(x, y, count = 15, type = 'normal') {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+    const speed = type === 'boss' ? 3 + Math.random() * 4 : 2 + Math.random() * 3;
+    const size = type === 'boss' ? 3 + Math.random() * 4 : 2 + Math.random() * 3;
+
+    particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size: size,
+      life: 1.0,
+      decay: 0.02 + Math.random() * 0.02,
+      color: type === 'boss' ?
+        `hsl(${30 + Math.random() * 30}, 100%, ${50 + Math.random() * 30}%)` :
+        `hsl(${Math.random() * 60}, 100%, ${50 + Math.random() * 30}%)`
+    });
+  }
+}
+
+// Particle system for power-up collection
+function createPowerUpParticles(x, y, type) {
+  const colors = {
+    rapid: '#ffff00',     // Yellow for rapid fire
+    shield: '#00ffff',    // Cyan for shield
+    life: '#ff0080',      // Magenta for life
+    laser: '#8cfff6',     // Laser color
+    missile: '#ff9f66'    // Missile color
+  };
+
+  for (let i = 0; i < 12; i++) {
+    const angle = (Math.PI * 2 * i) / 12;
+    const speed = 1.5 + Math.random() * 2;
+
+    particles.push({
+      x: x,
+      y: y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 1, // Slight upward movement
+      size: 2 + Math.random() * 2,
+      life: 1.0,
+      decay: 0.015,
+      color: colors[type] || '#ffffff'
+    });
+  }
+}
+
+function updateParticles(delta) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const particle = particles[i];
+    particle.x += particle.vx;
+    particle.y += particle.vy;
+    particle.vy += 0.1; // gravity
+    particle.vx *= 0.99; // air resistance
+    particle.life -= particle.decay;
+
+    if (particle.life <= 0) {
+      particles.splice(i, 1);
+    }
+  }
+}
+
+function drawParticles() {
+  particles.forEach(particle => {
+    const alpha = Math.max(0, particle.life);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = particle.color;
+    ctx.beginPath();
+    ctx.arc(particle.x, particle.y, particle.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
 function updateExplosions(delta) {
   for (let i = explosions.length - 1; i >= 0; i--) {
     const explosion = explosions[i];
@@ -1587,6 +1686,14 @@ function onEnemyDestroyed(enemy, { baseScore = 100, comboBonus = 1, allowDrops =
     if (enemy.type !== ENEMY_TYPES.BOSS && isWaveActive) {
       waveEnemiesDestroyed = Math.min(ENEMIES_PER_WAVE, waveEnemiesDestroyed + 1);
     }
+
+    // Create explosion particles
+    const centerX = enemy.x + enemy.width / 2;
+    const centerY = enemy.y + enemy.height / 2;
+    const particleType = enemy.type === ENEMY_TYPES.BOSS ? 'boss' : 'normal';
+    const particleCount = enemy.type === ENEMY_TYPES.BOSS ? 25 : 15;
+    createExplosionParticles(centerX, centerY, particleCount, particleType);
+
   } catch (error) {
     console.error('Error in onEnemyDestroyed:', error);
     // Continue game execution even if there's an error
@@ -1793,69 +1900,146 @@ function handleCollisions() {
 }
 
 function drawHUD() {
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-  ctx.font = '20px sans-serif';
-  ctx.fillText(`Score: ${score}`, 10, 30);
+  // Enhanced HUD with backgrounds and better typography
 
-  ctx.fillText(`Lives: ${player.lives}`, 10, 60);
+  // Score display with background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(5, 5, 200, 35);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(5, 5, 200, 35);
 
-  ctx.fillStyle = '#88cc88';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 24px monospace';
+  ctx.fillText(`SCORE ${score.toLocaleString()}`, 12, 30);
+
+  // Lives display with background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(5, 45, 120, 30);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.strokeRect(5, 45, 120, 30);
+
+  ctx.fillStyle = player.lives <= 1 ? '#ff4444' : '#ffffff';
+  ctx.font = 'bold 20px monospace';
+  ctx.fillText(`LIVES ${player.lives}`, 12, 67);
+
+  // Volume indicator
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(canvas.width - 130, 5, 120, 25);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.strokeRect(canvas.width - 130, 5, 120, 25);
+
+  ctx.fillStyle = '#aaaaaa';
+  ctx.font = '14px monospace';
+  ctx.fillText(`VOL ${Math.round(masterVolume * 100)}%`, canvas.width - 125, 22);
+
+  // Wave info display with background
+  let waveText = '';
+  let waveColor = '#88cc88';
+
   if (isBossPhase) {
     if (currentWave === 9) {
-      ctx.fillStyle = '#ff6699';
-      ctx.fillText(`FINAL BOSS BATTLE`, 10, 90);
+      waveText = 'FINAL BOSS BATTLE';
+      waveColor = '#ff6699';
     } else if (currentWave > 9) {
-      ctx.fillStyle = '#ff3366';
-      ctx.fillText(`ENDLESS BOSS - Wave ${currentWave}`, 10, 90);
+      waveText = `ENDLESS BOSS - Wave ${currentWave}`;
+      waveColor = '#ff3366';
     } else {
-      ctx.fillText(`Boss Battle`, 10, 90);
+      waveText = 'Boss Battle';
     }
   } else if (isWaveActive) {
     if (currentWave > 9) {
-      ctx.fillStyle = '#ff9933';
-      ctx.fillText(`ENDLESS Wave ${currentWave} - ${waveEnemiesDestroyed}/${ENEMIES_PER_WAVE}`, 10, 90);
+      waveText = `ENDLESS Wave ${currentWave} - ${waveEnemiesDestroyed}/${ENEMIES_PER_WAVE}`;
+      waveColor = '#ff9933';
     } else {
-      ctx.fillText(`Wave ${currentWave} - ${waveEnemiesDestroyed}/${ENEMIES_PER_WAVE}`, 10, 90);
+      waveText = `Wave ${currentWave} - ${waveEnemiesDestroyed}/${ENEMIES_PER_WAVE}`;
     }
   } else if (currentWave > 1) {
     const timeLeft = Math.max(0, BREAK_BETWEEN_WAVES - (Date.now() - waveStartTime));
     if (currentWave > 9) {
-      ctx.fillStyle = '#ff9933';
-      ctx.fillText(`ENDLESS - Next Wave in ${(timeLeft / 1000).toFixed(1)}s`, 10, 90);
+      waveText = `ENDLESS - Next Wave in ${(timeLeft / 1000).toFixed(1)}s`;
+      waveColor = '#ff9933';
     } else {
-      ctx.fillText(`Next Wave in ${(timeLeft / 1000).toFixed(1)}s`, 10, 90);
+      waveText = `Next Wave in ${(timeLeft / 1000).toFixed(1)}s`;
     }
   }
 
-  let statusY = 120;
+  if (waveText) {
+    const waveWidth = ctx.measureText(waveText).width + 20;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(5, 80, waveWidth, 30);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.strokeRect(5, 80, waveWidth, 30);
+
+    ctx.fillStyle = waveColor;
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText(waveText, 12, 102);
+  }
+
+  // Status effects panel (right side)
+  let statusY = 80;
+  const rightX = canvas.width - 160;
+
+  // Combo display
   if (scoreMultiplier > 1) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(rightX, statusY, 150, 25);
+    ctx.strokeStyle = 'rgba(255, 221, 68, 0.5)';
+    ctx.strokeRect(rightX, statusY, 150, 25);
+
     ctx.fillStyle = '#ffdd44';
-    ctx.fillText(`Combo x${scoreMultiplier}`, 10, statusY);
-    statusY += 26;
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(`COMBO x${scoreMultiplier}`, rightX + 8, statusY + 18);
+    statusY += 35;
   }
 
   const now = Date.now();
 
+  // Weapon status
   if (player.weapon !== WEAPON_MODES.DEFAULT) {
     const remaining = Math.max(0, (player.weaponUntil - now) / 1000).toFixed(1);
-    ctx.fillStyle = player.weapon === WEAPON_MODES.LASER ? '#8cfff6' : '#ff9f66';
-    const label = player.weapon === WEAPON_MODES.LASER ? 'Laser' : 'Missiles';
-    ctx.fillText(`${label}: ${remaining}s`, 10, statusY);
-    statusY += 26;
+    const weaponColor = player.weapon === WEAPON_MODES.LASER ? '#8cfff6' : '#ff9f66';
+    const label = player.weapon === WEAPON_MODES.LASER ? 'LASER' : 'MISSILES';
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(rightX, statusY, 150, 25);
+    ctx.strokeStyle = `${weaponColor}80`;
+    ctx.strokeRect(rightX, statusY, 150, 25);
+
+    ctx.fillStyle = weaponColor;
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText(`${label} ${remaining}s`, rightX + 8, statusY + 18);
+    statusY += 35;
   }
 
+  // Rapid fire status
   if (isRapidFireActive()) {
     const remaining = Math.max(0, (player.rapidFireUntil - now) / 1000).toFixed(1);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(rightX, statusY, 150, 25);
+    ctx.strokeStyle = '#ffcc6680';
+    ctx.strokeRect(rightX, statusY, 150, 25);
+
     ctx.fillStyle = '#ffcc66';
-    ctx.fillText(`Rapid Fire: ${remaining}s`, 10, statusY);
-    statusY += 26;
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText(`RAPID ${remaining}s`, rightX + 8, statusY + 18);
+    statusY += 35;
   }
 
+  // Shield status
   if (isShieldActive()) {
     const remaining = Math.max(0, (player.shieldUntil - now) / 1000).toFixed(1);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(rightX, statusY, 150, 25);
+    ctx.strokeStyle = '#7de0ff80';
+    ctx.strokeRect(rightX, statusY, 150, 25);
+
     ctx.fillStyle = '#7de0ff';
-    ctx.fillText(`Shield: ${remaining}s`, 10, statusY);
-    statusY += 26;
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText(`SHIELD ${remaining}s`, rightX + 8, statusY + 18);
+    statusY += 35;
   }
 
   ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
