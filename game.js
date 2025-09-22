@@ -859,7 +859,7 @@ function maybeSpawnPowerUp(enemy) {
 function gameLoop() {
   try {
     const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    if (frameNow < hitStopUntil) {
+    if (Date.now() < hitStopUntil) {
       requestAnimationFrame(gameLoop);
       return;
     }
