@@ -65,16 +65,48 @@ let isGameOver = false;
 
 const bullets = [];
 const enemies = [];
+const powerUps = [];
+const stars = [];
 
 const BULLET_WIDTH = 6;
 const BULLET_HEIGHT = 12;
 const BULLET_SPEED = 8;
-const SHOT_COOLDOWN = 200; // milliseconds
+const BASE_SHOT_COOLDOWN = 200; // milliseconds
+const RAPID_FIRE_COOLDOWN = 80; // milliseconds
 
 const ENEMY_WIDTH = 40;
 const ENEMY_HEIGHT = 40;
 const ENEMY_SPEED = 2.5;
 const ENEMY_SPAWN_INTERVAL = 1000; // milliseconds
+
+const PLAYER_MAX_LIVES = 3;
+const PLAYER_INVULNERABLE_TIME = 1500; // milliseconds
+
+const POWERUP_TYPES = {
+  RAPID_FIRE: 'rapidFire',
+  SHIELD: 'shield',
+  LIFE: 'life'
+};
+
+const POWERUP_DROP_CHANCE = 0.25;
+const POWERUP_FALL_SPEED = 2.5;
+const POWERUP_SIZE = 26;
+
+const POWERUP_DURATION = {
+  [POWERUP_TYPES.RAPID_FIRE]: 6000,
+  [POWERUP_TYPES.SHIELD]: 5000
+};
+
+const STAR_LAYERS = [
+  { count: 50, speed: 0.05, size: 2.5, color: 'rgba(255, 255, 255, 0.9)' },
+  { count: 40, speed: 0.08, size: 1.8, color: 'rgba(180, 200, 255, 0.6)' },
+  { count: 30, speed: 0.12, size: 1.2, color: 'rgba(255, 220, 180, 0.5)' }
+];
+
+const MIN_SPAWN_INTERVAL = 320;
+
+let lastFrameTimestamp = typeof performance !== 'undefined' ? performance.now() : Date.now();
+let gameStartTimestamp = Date.now();
 
 // Enemy types
 const ENEMY_TYPES = {
@@ -91,10 +123,86 @@ const player = {
   width: 50,
   height: 50,
   color: 'blue',
-  speed: 5
+  speed: 5,
+  lives: PLAYER_MAX_LIVES,
+  invulnerableUntil: 0,
+  shieldUntil: 0,
+  rapidFireUntil: 0
 };
 
 const initialPlayerState = { ...player };
+
+function isShieldActive() {
+  return Date.now() < player.shieldUntil;
+}
+
+function isRapidFireActive() {
+  return Date.now() < player.rapidFireUntil;
+}
+
+function isPlayerInvulnerable() {
+  return Date.now() < player.invulnerableUntil;
+}
+
+function initStars() {
+  stars.length = 0;
+  STAR_LAYERS.forEach((layer) => {
+    for (let i = 0; i < layer.count; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        speed: layer.speed,
+        size: layer.size,
+        color: layer.color
+      });
+    }
+  });
+}
+
+function updateStars(delta) {
+  for (let i = 0; i < stars.length; i++) {
+    const star = stars[i];
+    star.y += star.speed * delta;
+
+    if (star.y > canvas.height + star.size) {
+      star.y = -star.size;
+      star.x = Math.random() * canvas.width;
+    }
+  }
+}
+
+function drawStars() {
+  stars.forEach((star) => {
+    ctx.fillStyle = star.color;
+    ctx.fillRect(star.x, star.y, star.size, star.size);
+  });
+}
+
+function getElapsedSeconds() {
+  return (Date.now() - gameStartTimestamp) / 1000;
+}
+
+function getDifficultyLevel() {
+  const elapsed = getElapsedSeconds();
+  const scoreFactor = Math.min(score / 2500, 1.5);
+  return 1 + elapsed / 45 + scoreFactor * 0.8;
+}
+
+function getCurrentSpawnInterval() {
+  const level = getDifficultyLevel();
+  const dynamicInterval = ENEMY_SPAWN_INTERVAL / (1 + level * 0.3) - score * 0.02;
+  return Math.max(MIN_SPAWN_INTERVAL, dynamicInterval);
+}
+
+function getCurrentEnemySpeed() {
+  const level = getDifficultyLevel();
+  const speedBonus = Math.min(4, level * 0.8);
+  return ENEMY_SPEED + speedBonus;
+}
+
+function getZigzagHorizontalSpeed(level) {
+  return 2 + Math.min(3, level * 0.4);
+}
 
 // Input handling
 document.addEventListener('keydown', (e) => {
@@ -133,8 +241,9 @@ function updatePlayer() {
 function handleShooting() {
   const now = Date.now();
   const isShooting = keys[' '] || keys['Space'];
+  const cooldown = isRapidFireActive() ? RAPID_FIRE_COOLDOWN : BASE_SHOT_COOLDOWN;
 
-  if (isShooting && now - lastShotTime >= SHOT_COOLDOWN) {
+  if (isShooting && now - lastShotTime >= cooldown) {
     bullets.push({
       x: player.x + player.width / 2 - BULLET_WIDTH / 2,
       y: player.y - BULLET_HEIGHT,
@@ -159,25 +268,153 @@ function updateBullets() {
   }
 }
 
+function updatePowerUps() {
+  for (let i = powerUps.length - 1; i >= 0; i--) {
+    const powerUp = powerUps[i];
+    powerUp.y += POWERUP_FALL_SPEED;
+    powerUp.rotation += powerUp.rotationSpeed;
+
+    if (powerUp.y - powerUp.size / 2 > canvas.height) {
+      powerUps.splice(i, 1);
+    }
+  }
+}
+
+function handlePowerUpCollection() {
+  for (let i = powerUps.length - 1; i >= 0; i--) {
+    const powerUp = powerUps[i];
+    const bounds = {
+      x: powerUp.x - powerUp.size / 2,
+      y: powerUp.y - powerUp.size / 2,
+      width: powerUp.size,
+      height: powerUp.size
+    };
+
+    if (rectsIntersect(bounds, player)) {
+      applyPowerUp(powerUp.type);
+      powerUps.splice(i, 1);
+    }
+  }
+}
+
+function drawPowerUps() {
+  powerUps.forEach((powerUp) => {
+    ctx.save();
+    ctx.translate(powerUp.x, powerUp.y);
+    ctx.rotate(powerUp.rotation);
+
+    switch (powerUp.type) {
+      case POWERUP_TYPES.RAPID_FIRE:
+        ctx.fillStyle = '#ffcc00';
+        ctx.beginPath();
+        ctx.moveTo(0, -powerUp.size / 2);
+        ctx.lineTo(powerUp.size / 2, 0);
+        ctx.lineTo(0, powerUp.size / 2);
+        ctx.lineTo(-powerUp.size / 2, 0);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      case POWERUP_TYPES.SHIELD:
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, powerUp.size / 2.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(0, 0, powerUp.size / 4, 0, Math.PI * 2);
+        ctx.stroke();
+        break;
+      case POWERUP_TYPES.LIFE:
+      default:
+        ctx.fillStyle = '#ff6688';
+        ctx.beginPath();
+        const heartSize = powerUp.size / 3;
+        ctx.moveTo(0, heartSize);
+        ctx.bezierCurveTo(heartSize, heartSize * 2, powerUp.size / 2, heartSize, 0, -heartSize);
+        ctx.bezierCurveTo(-powerUp.size / 2, heartSize, -heartSize, heartSize * 2, 0, heartSize);
+        ctx.fill();
+        break;
+    }
+
+    ctx.restore();
+  });
+}
+
+function applyPowerUp(type) {
+  const now = Date.now();
+
+  if (type === POWERUP_TYPES.RAPID_FIRE) {
+    player.rapidFireUntil = Math.max(player.rapidFireUntil, now + POWERUP_DURATION[POWERUP_TYPES.RAPID_FIRE]);
+    return;
+  }
+
+  if (type === POWERUP_TYPES.SHIELD) {
+    player.shieldUntil = Math.max(player.shieldUntil, now + POWERUP_DURATION[POWERUP_TYPES.SHIELD]);
+    player.invulnerableUntil = Math.max(player.invulnerableUntil, now + 250);
+    return;
+  }
+
+  if (type === POWERUP_TYPES.LIFE) {
+    if (player.lives < PLAYER_MAX_LIVES) {
+      player.lives += 1;
+    } else {
+      score += 200;
+    }
+  }
+}
+
+function maybeSpawnPowerUp(enemy) {
+  if (Math.random() > POWERUP_DROP_CHANCE) {
+    return;
+  }
+
+  const types = [
+    POWERUP_TYPES.RAPID_FIRE,
+    POWERUP_TYPES.SHIELD,
+    POWERUP_TYPES.LIFE
+  ];
+
+  const type = types[Math.floor(Math.random() * types.length)];
+
+  powerUps.push({
+    x: enemy.x + enemy.width / 2,
+    y: enemy.y + enemy.height / 2,
+    size: POWERUP_SIZE,
+    type,
+    rotation: 0,
+    rotationSpeed: (Math.random() * 0.04 + 0.02) * (Math.random() < 0.5 ? -1 : 1)
+  });
+}
+
 // Game loop
 function gameLoop() {
+  const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const delta = frameNow - lastFrameTimestamp;
+  lastFrameTimestamp = frameNow;
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  updateStars(delta);
+  drawStars();
+
   if (!isGameOver) {
-    // Update game state
     updatePlayer();
     handleShooting();
     updateBullets();
     handleEnemySpawning();
     updateEnemies();
+    updatePowerUps();
+    handlePowerUpCollection();
     handleCollisions();
+  }
 
-    // Draw everything
-    drawPlayer();
-    drawBullets();
-    drawEnemies();
-    drawHUD();
-  } else {
+  drawPlayer();
+  drawBullets();
+  drawEnemies();
+  drawPowerUps();
+  drawHUD();
+
+  if (isGameOver) {
     drawGameOver();
   }
 
@@ -185,6 +422,12 @@ function gameLoop() {
 }
 
 function drawPlayer() {
+  const now = Date.now();
+
+  if (!isGameOver && isPlayerInvulnerable() && Math.floor(now / 100) % 2 === 0) {
+    return;
+  }
+
   // Draw a simple spaceship shape using triangles
   ctx.fillStyle = player.color;
 
@@ -214,6 +457,14 @@ function drawPlayer() {
   ctx.lineTo(player.x + player.width - 5, player.y + player.height);
   ctx.closePath();
   ctx.fill();
+
+  if (isShieldActive()) {
+    ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, player.width, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 }
 
 function drawBullets() {
@@ -239,23 +490,29 @@ function drawBullets() {
 
 function handleEnemySpawning() {
   const now = Date.now();
-  if (now - lastEnemySpawnTime < ENEMY_SPAWN_INTERVAL) {
+  const spawnInterval = getCurrentSpawnInterval();
+  if (now - lastEnemySpawnTime < spawnInterval) {
     return;
   }
 
-  // Randomly choose enemy type (70% normal, 30% zigzag)
-  const enemyType = Math.random() < 0.7 ? ENEMY_TYPES.NORMAL : ENEMY_TYPES.ZIGZAG;
+  const level = getDifficultyLevel();
+  const enemySpeed = getCurrentEnemySpeed() * (0.9 + Math.random() * 0.2);
+  const zigzagChance = Math.min(0.55, 0.3 + level * 0.08);
+  const enemyType = Math.random() < zigzagChance ? ENEMY_TYPES.ZIGZAG : ENEMY_TYPES.NORMAL;
 
   const enemy = {
     x: Math.random() * (canvas.width - ENEMY_WIDTH),
     y: -ENEMY_HEIGHT,
     width: ENEMY_WIDTH,
     height: ENEMY_HEIGHT,
-    speed: ENEMY_SPEED,
+    speed: enemySpeed,
+    baseSpeed: enemySpeed,
     type: enemyType,
     color: enemyType === ENEMY_TYPES.NORMAL ? 'red' : 'purple',
     zigzagTimer: 0,
-    zigzagDirection: 1
+    zigzagDirection: 1,
+    horizontalSpeed: enemyType === ENEMY_TYPES.ZIGZAG ? getZigzagHorizontalSpeed(level) : 0,
+    spawnedAt: now
   };
 
   enemies.push(enemy);
@@ -279,7 +536,7 @@ function updateEnemies() {
       }
 
       // Move horizontally
-      enemy.x += enemy.zigzagDirection * 2;
+      enemy.x += enemy.zigzagDirection * enemy.horizontalSpeed;
 
       // Keep enemy within screen bounds
       if (enemy.x <= 0 || enemy.x >= canvas.width - enemy.width) {
@@ -349,6 +606,8 @@ function rectsIntersect(a, b) {
 }
 
 function handleCollisions() {
+  const now = Date.now();
+
   // Bullet vs enemy
   for (let i = enemies.length - 1; i >= 0; i--) {
     const enemy = enemies[i];
@@ -363,6 +622,7 @@ function handleCollisions() {
         score += 100;
         enemyDestroyed = true;
         playExplosionSound();
+        maybeSpawnPowerUp(enemy);
         break;
       }
     }
@@ -373,16 +633,54 @@ function handleCollisions() {
 
     // Player vs enemy
     if (rectsIntersect(enemy, player)) {
-      isGameOver = true;
-      break; // End collision check for this frame
+      if (isShieldActive()) {
+        enemies.splice(i, 1);
+        playExplosionSound();
+        maybeSpawnPowerUp(enemy);
+        continue;
+      }
+
+      if (isPlayerInvulnerable()) {
+        continue;
+      }
+
+      enemies.splice(i, 1);
+      player.lives -= 1;
+      player.invulnerableUntil = now + PLAYER_INVULNERABLE_TIME;
+
+      if (player.lives <= 0) {
+        isGameOver = true;
+        break;
+      }
     }
   }
 }
 
 function drawHUD() {
-  ctx.fillStyle = '#000';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
   ctx.font = '20px sans-serif';
   ctx.fillText(`Score: ${score}`, 10, 30);
+
+  ctx.fillText(`Lives: ${player.lives}`, 10, 60);
+
+  const now = Date.now();
+  let statusY = 90;
+
+  if (isRapidFireActive()) {
+    const remaining = Math.max(0, (player.rapidFireUntil - now) / 1000).toFixed(1);
+    ctx.fillStyle = '#ffcc66';
+    ctx.fillText(`Rapid Fire: ${remaining}s`, 10, statusY);
+    statusY += 26;
+  }
+
+  if (isShieldActive()) {
+    const remaining = Math.max(0, (player.shieldUntil - now) / 1000).toFixed(1);
+    ctx.fillStyle = '#7de0ff';
+    ctx.fillText(`Shield: ${remaining}s`, 10, statusY);
+    statusY += 26;
+  }
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
 }
 
 function drawGameOver() {
@@ -406,12 +704,22 @@ function restartGame() {
   score = 0;
   player.x = initialPlayerState.x;
   player.y = initialPlayerState.y;
+  player.lives = PLAYER_MAX_LIVES;
+  player.invulnerableUntil = 0;
+  player.shieldUntil = 0;
+  player.rapidFireUntil = 0;
   bullets.length = 0;
   enemies.length = 0;
+  powerUps.length = 0;
   isGameOver = false;
   lastShotTime = 0;
   lastEnemySpawnTime = 0;
+  keys = {};
+  gameStartTimestamp = Date.now();
+  lastFrameTimestamp = typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
+
+initStars();
 
 // Start the game loop
 gameLoop();
