@@ -18,21 +18,25 @@ function initAudio() {
 function playShootSound() {
   if (!audioCtx) return;
 
-  const oscillator = audioCtx.createOscillator();
-  const gainNode = audioCtx.createGain();
+  try {
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
 
-  oscillator.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
 
-  oscillator.type = 'triangle';
-  oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
-  oscillator.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.1);
+    oscillator.type = 'triangle';
+    oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.1);
 
-  gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+    gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
 
-  oscillator.start(audioCtx.currentTime);
-  oscillator.stop(audioCtx.currentTime + 0.1);
+    oscillator.start(audioCtx.currentTime);
+    oscillator.stop(audioCtx.currentTime + 0.1);
+  } catch (error) {
+    console.error('Error in playShootSound:', error);
+  }
 }
 
 // Generate explosion sound
@@ -66,20 +70,24 @@ function playExplosionSound() {
 function playPowerUpSound() {
   if (!audioCtx) return;
 
-  const oscillator = audioCtx.createOscillator();
-  const gainNode = audioCtx.createGain();
-  oscillator.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+  try {
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
 
-  oscillator.type = 'sine';
-  oscillator.frequency.setValueAtTime(600, audioCtx.currentTime);
-  oscillator.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.2);
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(600, audioCtx.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.2);
 
-  gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+    gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
 
-  oscillator.start(audioCtx.currentTime);
-  oscillator.stop(audioCtx.currentTime + 0.2);
+    oscillator.start(audioCtx.currentTime);
+    oscillator.stop(audioCtx.currentTime + 0.2);
+  } catch (error) {
+    console.error('Error in playPowerUpSound:', error);
+  }
 }
 
 function playComboUpSound() {
@@ -223,12 +231,17 @@ function saveHighScore(newScore) {
 }
 
 function updateHighScore() {
-  if (score > highScore) {
-    highScore = score;
-    saveHighScore(highScore);
-    return true; // New high score achieved
+  try {
+    if (score > highScore) {
+      highScore = score;
+      saveHighScore(highScore);
+      return true; // New high score achieved
+    }
+    return false;
+  } catch (error) {
+    console.error('Error in updateHighScore:', error);
+    return false;
   }
-  return false;
 }
 let keys = {};
 let lastShotTime = 0;
@@ -844,60 +857,65 @@ function maybeSpawnPowerUp(enemy) {
 
 // Game loop
 function gameLoop() {
-  const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  if (frameNow < hitStopUntil) {
-    requestAnimationFrame(gameLoop);
-    return;
-  }
-  const delta = frameNow - lastFrameTimestamp;
-  lastFrameTimestamp = frameNow;
+  try {
+    const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (frameNow < hitStopUntil) {
+      requestAnimationFrame(gameLoop);
+      return;
+    }
+    const delta = frameNow - lastFrameTimestamp;
+    lastFrameTimestamp = frameNow;
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawStageBackdrop();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawStageBackdrop();
 
-  if (isPaused) {
+    if (isPaused) {
+      drawStars();
+      drawExplosions();
+      drawPlayer();
+      drawBullets();
+      drawEnemyBullets();
+      drawEnemies();
+      drawPowerUps();
+      drawHUD();
+      drawPaused();
+      requestAnimationFrame(gameLoop);
+      return;
+    }
+
+    updateStars(delta);
     drawStars();
-    drawExplosions();
+
+    if (!isGameOver) {
+      updatePlayer();
+      handleShooting();
+      updateBullets();
+      updateEnemyBullets();
+      handleWaveSystem();
+      updateEnemies();
+      updatePowerUps();
+      handlePowerUpCollection();
+      updateExplosions(delta);
+      handleCollisions();
+    } else {
+      updateExplosions(delta);
+    }
+
     drawPlayer();
     drawBullets();
     drawEnemyBullets();
     drawEnemies();
     drawPowerUps();
+    drawExplosions();
     drawHUD();
-    drawPaused();
-    requestAnimationFrame(gameLoop);
-    return;
-  }
+    drawAnnouncements();
 
-  updateStars(delta);
-  drawStars();
-
-  if (!isGameOver) {
-    updatePlayer();
-    handleShooting();
-    updateBullets();
-    updateEnemyBullets();
-    handleWaveSystem();
-    updateEnemies();
-    updatePowerUps();
-    handlePowerUpCollection();
-    updateExplosions(delta);
-    handleCollisions();
-  } else {
-    updateExplosions(delta);
-  }
-
-  drawPlayer();
-  drawBullets();
-  drawEnemyBullets();
-  drawEnemies();
-  drawPowerUps();
-  drawExplosions();
-  drawHUD();
-  drawAnnouncements();
-
-  if (isGameOver) {
-    drawGameOver();
+    if (isGameOver) {
+      drawGameOver();
+    }
+  } catch (error) {
+    console.error('Error in gameLoop:', error);
+    // Continue execution
   }
 
   requestAnimationFrame(gameLoop);
@@ -1625,9 +1643,10 @@ function triggerMissileExplosion(centerX, centerY, { excludeIndex = null } = {})
 }
 
 function handleCollisions() {
-  const now = Date.now();
+  try {
+    const now = Date.now();
 
-  for (let i = enemies.length - 1; i >= 0; i--) {
+    for (let i = enemies.length - 1; i >= 0; i--) {
     const enemy = enemies[i];
     let enemyDestroyed = false;
 
@@ -1761,6 +1780,9 @@ function handleCollisions() {
         break;
       }
     }
+  }
+  } catch (error) {
+    console.error('Error in handleCollisions:', error);
   }
 }
 
