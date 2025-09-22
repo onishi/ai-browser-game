@@ -131,8 +131,25 @@ let lastShotTime = 0;
 let isGameOver = false;
 let isPaused = false;
 
+// Score combo system
+let comboCount = 0;
+let scoreMultiplier = 1;
+const MAX_MULTIPLIER = 8;
+const COMBO_THRESHOLD = 5; // enemies needed for next multiplier level
+
+// Wave system
+let currentWave = 1;
+let waveEnemiesSpawned = 0;
+let waveEnemiesDestroyed = 0;
+let isWaveActive = false;
+let waveStartTime = 0;
+const ENEMIES_PER_WAVE = 8;
+const WAVE_SPAWN_INTERVAL = 300; // ms between enemies in a wave
+const BREAK_BETWEEN_WAVES = 3000; // ms break between waves
+
 const bullets = [];
 const enemies = [];
+const enemyBullets = [];
 const powerUps = [];
 const stars = [];
 
@@ -179,7 +196,8 @@ let gameStartTimestamp = Date.now();
 // Enemy types
 const ENEMY_TYPES = {
   NORMAL: 'normal',
-  ZIGZAG: 'zigzag'
+  ZIGZAG: 'zigzag',
+  BOSS: 'boss'
 };
 
 let lastEnemySpawnTime = 0;
@@ -487,7 +505,8 @@ function gameLoop() {
     updatePlayer();
     handleShooting();
     updateBullets();
-    handleEnemySpawning();
+    updateEnemyBullets();
+    handleWaveSystem();
     updateEnemies();
     updatePowerUps();
     handlePowerUpCollection();
@@ -496,6 +515,7 @@ function gameLoop() {
 
   drawPlayer();
   drawBullets();
+  drawEnemyBullets();
   drawEnemies();
   drawPowerUps();
   drawHUD();
@@ -572,13 +592,79 @@ function drawBullets() {
   });
 }
 
-function handleEnemySpawning() {
+function handleWaveSystem() {
   const now = Date.now();
-  const spawnInterval = getCurrentSpawnInterval();
-  if (now - lastEnemySpawnTime < spawnInterval) {
+
+  // Start first wave immediately
+  if (!isWaveActive && currentWave === 1 && waveStartTime === 0) {
+    startNewWave();
     return;
   }
 
+  // Check if current wave is complete
+  if (isWaveActive && waveEnemiesSpawned >= ENEMIES_PER_WAVE && enemies.length === 0) {
+    completeWave();
+    return;
+  }
+
+  // Start next wave after break
+  if (!isWaveActive && now - waveStartTime >= BREAK_BETWEEN_WAVES) {
+    startNewWave();
+    return;
+  }
+
+  // Spawn enemies during active wave
+  if (isWaveActive &&
+      waveEnemiesSpawned < ENEMIES_PER_WAVE &&
+      now - lastEnemySpawnTime >= WAVE_SPAWN_INTERVAL) {
+    spawnWaveEnemy();
+  }
+}
+
+function startNewWave() {
+  const now = Date.now();
+  isWaveActive = true;
+  waveEnemiesSpawned = 0;
+  waveEnemiesDestroyed = 0;
+  waveStartTime = now;
+  lastEnemySpawnTime = now;
+}
+
+function completeWave() {
+  isWaveActive = false;
+  currentWave++;
+  waveStartTime = Date.now();
+
+  // Spawn boss every 3 waves
+  if (currentWave % 3 === 1 && currentWave > 1) {
+    spawnBoss();
+  }
+}
+
+function spawnBoss() {
+  const now = Date.now();
+  const boss = {
+    x: canvas.width / 2 - 60,
+    y: -80,
+    width: 120,
+    height: 80,
+    speed: 1,
+    type: ENEMY_TYPES.BOSS,
+    color: 'orange',
+    health: 5,
+    maxHealth: 5,
+    lastShot: 0,
+    shootInterval: 1500,
+    moveDirection: 1,
+    moveTimer: 0,
+    spawnedAt: now
+  };
+
+  enemies.push(boss);
+}
+
+function spawnWaveEnemy() {
+  const now = Date.now();
   const level = getDifficultyLevel();
   const enemySpeed = getCurrentEnemySpeed() * (0.9 + Math.random() * 0.2);
   const zigzagChance = Math.min(0.55, 0.3 + level * 0.08);
@@ -600,6 +686,7 @@ function handleEnemySpawning() {
   };
 
   enemies.push(enemy);
+  waveEnemiesSpawned++;
   lastEnemySpawnTime = now;
 }
 
@@ -607,25 +694,80 @@ function updateEnemies() {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const enemy = enemies[i];
 
-    enemy.y += enemy.speed;
+    if (enemy.type === ENEMY_TYPES.BOSS) {
+      updateBoss(enemy);
+    } else {
+      enemy.y += enemy.speed;
 
-    if (enemy.type === ENEMY_TYPES.ZIGZAG) {
-      enemy.zigzagTimer += 1;
+      if (enemy.type === ENEMY_TYPES.ZIGZAG) {
+        enemy.zigzagTimer += 1;
 
-      if (enemy.zigzagTimer % 30 === 0) {
-        enemy.zigzagDirection *= -1;
-      }
+        if (enemy.zigzagTimer % 30 === 0) {
+          enemy.zigzagDirection *= -1;
+        }
 
-      enemy.x += enemy.zigzagDirection * enemy.horizontalSpeed;
+        enemy.x += enemy.zigzagDirection * enemy.horizontalSpeed;
 
-      if (enemy.x <= 0 || enemy.x >= canvas.width - enemy.width) {
-        enemy.zigzagDirection *= -1;
-        enemy.x = Math.max(0, Math.min(canvas.width - enemy.width, enemy.x));
+        if (enemy.x <= 0 || enemy.x >= canvas.width - enemy.width) {
+          enemy.zigzagDirection *= -1;
+          enemy.x = Math.max(0, Math.min(canvas.width - enemy.width, enemy.x));
+        }
       }
     }
 
     if (enemy.y > canvas.height) {
       enemies.splice(i, 1);
+    }
+  }
+}
+
+function updateBoss(boss) {
+  const now = Date.now();
+
+  // Move boss horizontally
+  boss.moveTimer += 1;
+  if (boss.moveTimer % 60 === 0) {
+    boss.moveDirection *= -1;
+  }
+
+  boss.x += boss.moveDirection * 2;
+  if (boss.x <= 0 || boss.x >= canvas.width - boss.width) {
+    boss.moveDirection *= -1;
+    boss.x = Math.max(0, Math.min(canvas.width - boss.width, boss.x));
+  }
+
+  // Move down slowly
+  if (boss.y < 50) {
+    boss.y += boss.speed;
+  }
+
+  // Boss shooting
+  if (now - boss.lastShot >= boss.shootInterval) {
+    boss.lastShot = now;
+
+    // Shoot 3 bullets in spread pattern
+    for (let i = -1; i <= 1; i++) {
+      enemyBullets.push({
+        x: boss.x + boss.width / 2 - 3,
+        y: boss.y + boss.height,
+        width: 6,
+        height: 8,
+        speed: 3,
+        direction: i * 0.3,
+        color: 'red'
+      });
+    }
+  }
+}
+
+function updateEnemyBullets() {
+  for (let i = enemyBullets.length - 1; i >= 0; i--) {
+    const bullet = enemyBullets[i];
+    bullet.y += bullet.speed;
+    bullet.x += bullet.direction * bullet.speed;
+
+    if (bullet.y > canvas.height || bullet.x < 0 || bullet.x > canvas.width) {
+      enemyBullets.splice(i, 1);
     }
   }
 }
@@ -637,7 +779,43 @@ function drawEnemies() {
     const centerX = enemy.x + enemy.width / 2;
     const centerY = enemy.y + enemy.height / 2;
 
-    if (enemy.type === ENEMY_TYPES.ZIGZAG) {
+    if (enemy.type === ENEMY_TYPES.BOSS) {
+      // Draw boss as large octagon
+      ctx.beginPath();
+      const sides = 8;
+      const radius = enemy.width / 2;
+      for (let i = 0; i < sides; i++) {
+        const angle = (i * 2 * Math.PI) / sides;
+        const x = centerX + Math.cos(angle) * radius;
+        const y = centerY + Math.sin(angle) * (radius * 0.6);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // Boss outline
+      ctx.strokeStyle = '#cc6600';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Health bar
+      const barWidth = enemy.width * 0.8;
+      const barHeight = 6;
+      const barX = enemy.x + (enemy.width - barWidth) / 2;
+      const barY = enemy.y - 15;
+
+      ctx.fillStyle = 'red';
+      ctx.fillRect(barX, barY, barWidth, barHeight);
+
+      ctx.fillStyle = 'green';
+      const healthPercent = enemy.health / enemy.maxHealth;
+      ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(barX, barY, barWidth, barHeight);
+    } else if (enemy.type === ENEMY_TYPES.ZIGZAG) {
       ctx.beginPath();
       ctx.moveTo(centerX, enemy.y);
       ctx.lineTo(enemy.x + enemy.width, centerY);
@@ -669,6 +847,13 @@ function drawEnemies() {
   });
 }
 
+function drawEnemyBullets() {
+  enemyBullets.forEach((bullet) => {
+    ctx.fillStyle = bullet.color;
+    ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+  });
+}
+
 function rectsIntersect(a, b) {
   return (
     a.x < b.x + b.width &&
@@ -689,12 +874,48 @@ function handleCollisions() {
       const bullet = bullets[j];
 
       if (rectsIntersect(enemy, bullet)) {
-        enemies.splice(i, 1);
         bullets.splice(j, 1);
-        score += 100;
-        enemyDestroyed = true;
-        playExplosionSound();
-        maybeSpawnPowerUp(enemy);
+
+        if (enemy.type === ENEMY_TYPES.BOSS) {
+          enemy.health--;
+          if (enemy.health <= 0) {
+            enemies.splice(i, 1);
+            enemyDestroyed = true;
+
+            // Boss gives more score
+            const baseScore = 500;
+            const earnedScore = baseScore * scoreMultiplier;
+            score += earnedScore;
+
+            // Update combo
+            comboCount += 3; // Boss counts as 3 kills for combo
+            if (comboCount >= COMBO_THRESHOLD && scoreMultiplier < MAX_MULTIPLIER) {
+              scoreMultiplier++;
+              comboCount = 0;
+            }
+
+            playExplosionSound();
+            maybeSpawnPowerUp(enemy);
+          }
+        } else {
+          enemies.splice(i, 1);
+          enemyDestroyed = true;
+
+          // Apply score with multiplier
+          const baseScore = 100;
+          const earnedScore = baseScore * scoreMultiplier;
+          score += earnedScore;
+
+          // Update combo
+          comboCount++;
+          if (comboCount >= COMBO_THRESHOLD && scoreMultiplier < MAX_MULTIPLIER) {
+            scoreMultiplier++;
+            comboCount = 0;
+          }
+
+          playExplosionSound();
+          maybeSpawnPowerUp(enemy);
+        }
         break;
       }
     }
@@ -718,7 +939,44 @@ function handleCollisions() {
       enemies.splice(i, 1);
       player.lives -= 1;
       player.invulnerableUntil = now + PLAYER_INVULNERABLE_TIME;
+
+      // Reset combo on hit
+      comboCount = 0;
+      scoreMultiplier = 1;
+
       playExplosionSound(); // Play sound on player hit
+
+      if (player.lives <= 0) {
+        isGameOver = true;
+        stopBGM();
+        break;
+      }
+    }
+  }
+
+  // Check enemy bullet vs player collisions
+  for (let i = enemyBullets.length - 1; i >= 0; i--) {
+    const bullet = enemyBullets[i];
+
+    if (rectsIntersect(bullet, player)) {
+      if (isShieldActive()) {
+        enemyBullets.splice(i, 1);
+        continue;
+      }
+
+      if (isPlayerInvulnerable()) {
+        continue;
+      }
+
+      enemyBullets.splice(i, 1);
+      player.lives -= 1;
+      player.invulnerableUntil = Date.now() + PLAYER_INVULNERABLE_TIME;
+
+      // Reset combo on hit
+      comboCount = 0;
+      scoreMultiplier = 1;
+
+      playExplosionSound();
 
       if (player.lives <= 0) {
         isGameOver = true;
@@ -736,8 +994,24 @@ function drawHUD() {
 
   ctx.fillText(`Lives: ${player.lives}`, 10, 60);
 
+  // Show wave info
+  ctx.fillStyle = '#88cc88';
+  if (isWaveActive) {
+    ctx.fillText(`Wave ${currentWave} - ${waveEnemiesSpawned}/${ENEMIES_PER_WAVE}`, 10, 90);
+  } else {
+    const timeLeft = Math.max(0, BREAK_BETWEEN_WAVES - (Date.now() - waveStartTime));
+    ctx.fillText(`Next Wave in ${(timeLeft / 1000).toFixed(1)}s`, 10, 90);
+  }
+
+  // Show combo multiplier
+  let statusY = 120;
+  if (scoreMultiplier > 1) {
+    ctx.fillStyle = '#ffdd44';
+    ctx.fillText(`Combo x${scoreMultiplier}`, 10, statusY);
+    statusY += 26;
+  }
+
   const now = Date.now();
-  let statusY = 90;
 
   if (isRapidFireActive()) {
     const remaining = Math.max(0, (player.rapidFireUntil - now) / 1000).toFixed(1);
@@ -787,6 +1061,13 @@ function drawPaused() {
 function restartGame() {
   stopBGM();
   score = 0;
+  comboCount = 0;
+  scoreMultiplier = 1;
+  currentWave = 1;
+  waveEnemiesSpawned = 0;
+  waveEnemiesDestroyed = 0;
+  isWaveActive = false;
+  waveStartTime = 0;
   player.x = initialPlayerState.x;
   player.y = initialPlayerState.y;
   player.lives = PLAYER_MAX_LIVES;
@@ -795,6 +1076,7 @@ function restartGame() {
   player.rapidFireUntil = 0;
   bullets.length = 0;
   enemies.length = 0;
+  enemyBullets.length = 0;
   powerUps.length = 0;
   isGameOver = false;
   isPaused = false;
