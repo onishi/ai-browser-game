@@ -1055,8 +1055,8 @@ function handleWaveSystem() {
   }
 
   if (isWaveActive &&
-      waveEnemiesDestroyed >= ENEMIES_PER_WAVE &&
-      enemies.every((enemy) => enemy.type !== ENEMY_TYPES.BOSS)) {
+      waveEnemiesSpawned >= ENEMIES_PER_WAVE &&
+      enemies.filter(e => e.type !== ENEMY_TYPES.BOSS).length === 0) {
     completeWave();
     return;
   }
