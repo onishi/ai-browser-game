@@ -5,7 +5,8 @@ body {
   align-items: center;
   height: 100vh;
   margin: 0;
-  flex-direction: column; 
+  flex-direction: column;
+  position: relative;
 }
 
 h1 {
@@ -21,4 +22,52 @@ canvas {
   background-color: #050505;
   border: 1px solid #262b44;
   box-shadow: 0 0 25px rgba(0, 0, 0, 0.45);
+}
+
+#title-screen {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  text-align: center;
+  font-family: 'Segoe UI', sans-serif;
+  background: rgba(10, 20, 40, 0.85);
+  padding: 40px;
+  border-radius: 15px;
+  box-shadow: 0 0 30px rgba(0, 128, 255, 0.5);
+  border: 2px solid #262b44;
+  width: 50%;
+  max-width: 500px;
+}
+
+#title-screen h2 {
+  font-size: 3em;
+  margin: 0 0 20px;
+  color: #8cfff6;
+  text-shadow: 0 0 15px #8cfff6;
+}
+
+#title-screen p {
+  font-size: 1.2em;
+  margin: 10px 0;
+  color: #f0f8ff;
+}
+
+#startButton {
+  margin-top: 20px;
+  padding: 15px 30px;
+  font-size: 1.5em;
+  color: white;
+  background: #007bff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.3s, box-shadow 0.3s;
+  box-shadow: 0 0 15px rgba(0, 128, 255, 0.7);
+}
+
+#startButton:hover {
+  background-color: #0056b3;
+  box-shadow: 0 0 25px rgba(0, 128, 255, 1);
 }

@@ -1,5 +1,7 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const titleScreen = document.getElementById('title-screen');
+const startButton = document.getElementById('startButton');
 
 // Audio context for sound effects
 let audioCtx = null;
@@ -217,6 +219,7 @@ function stopBGM(fadeDuration = 0.5) {
 }
 
 // Game state
+let gameState = 'title'; // 'title', 'playing', 'paused', 'gameOver'
 let score = 0;
 let highScore = 0;
 
@@ -245,8 +248,6 @@ function updateHighScore() {
 }
 let keys = {};
 let lastShotTime = 0;
-let isGameOver = false;
-let isPaused = false;
 let hitStopUntil = 0;
 
 // Score combo system
@@ -530,17 +531,16 @@ document.addEventListener('keydown', (e) => {
   keys[e.code] = true;
 
   if (e.key === 'p' || e.key === 'P') {
-    if (!isGameOver) {
-      isPaused = !isPaused;
-      if (isPaused) {
-        if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume * 0.3, audioCtx.currentTime);
-      } else {
-        if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume, audioCtx.currentTime);
-      }
+    if (gameState === 'playing') {
+      gameState = 'paused';
+      if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume * 0.3, audioCtx.currentTime);
+    } else if (gameState === 'paused') {
+      gameState = 'playing';
+      if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume, audioCtx.currentTime);
     }
   }
 
-  if (isGameOver && (e.key === 'r' || e.key === 'R')) {
+  if (gameState === 'gameOver' && (e.key === 'r' || e.key === 'R')) {
     restartGame();
   }
 });
@@ -549,6 +549,11 @@ document.addEventListener('keyup', (e) => {
   keys[e.key] = false;
   keys[e.code] = false;
 });
+
+startButton.addEventListener('click', () => {
+  startGame();
+});
+
 
 // Update player position
 function updatePlayer() {
@@ -868,54 +873,55 @@ function gameLoop() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     drawStageBackdrop();
-
-    if (isPaused) {
-      drawStars();
-      drawExplosions();
-      drawPlayer();
-      drawBullets();
-      drawEnemyBullets();
-      drawEnemies();
-      drawPowerUps();
-      drawHUD();
-      drawPaused();
-      requestAnimationFrame(gameLoop);
-      return;
-    }
-
     updateStars(delta);
     drawStars();
 
-    if (!isGameOver) {
-      updatePlayer();
-      handleShooting();
-      updateBullets();
-      updateEnemyBullets();
-      handleWaveSystem();
-      updateEnemies();
-      updatePowerUps();
-      handlePowerUpCollection();
-      updateExplosions(delta);
-      handleCollisions();
-    } else {
-      updateExplosions(delta);
-    }
+    switch (gameState) {
+      case 'playing':
+        updatePlayer();
+        handleShooting();
+        updateBullets();
+        updateEnemyBullets();
+        handleWaveSystem();
+        updateEnemies();
+        updatePowerUps();
+        handlePowerUpCollection();
+        updateExplosions(delta);
+        handleCollisions();
 
-    drawPlayer();
-    drawBullets();
-    drawEnemyBullets();
-    drawEnemies();
-    drawPowerUps();
-    drawExplosions();
-    drawHUD();
-    drawAnnouncements();
+        drawPlayer();
+        drawBullets();
+        drawEnemyBullets();
+        drawEnemies();
+        drawPowerUps();
+        drawExplosions();
+        drawHUD();
+        drawAnnouncements();
+        break;
+      
+      case 'paused':
+        drawPlayer();
+        drawBullets();
+        drawEnemyBullets();
+        drawEnemies();
+        drawPowerUps();
+        drawExplosions();
+        drawHUD();
+        drawPaused();
+        break;
 
-    if (isGameOver) {
-      drawGameOver();
+      case 'gameOver':
+        updateExplosions(delta);
+        drawExplosions();
+        drawGameOver();
+        break;
+
+      case 'title':
+        // The title screen is an HTML overlay, so we just draw the background
+        break;
     }
   } catch (error) {
     console.error('Error in gameLoop:', error);
-    // Continue execution
   }
 
   requestAnimationFrame(gameLoop);
@@ -924,7 +930,7 @@ function gameLoop() {
 function drawPlayer() {
   const now = Date.now();
 
-  if (!isGameOver && isPlayerInvulnerable() && Math.floor(now / 100) % 2 === 0) {
+  if (gameState !== 'gameOver' && isPlayerInvulnerable() && Math.floor(now / 100) % 2 === 0) {
     return;
   }
 
@@ -1743,7 +1749,7 @@ function handleCollisions() {
       playExplosionSound();
 
       if (player.lives <= 0) {
-        isGameOver = true;
+        gameState = 'gameOver';
         updateHighScore();
         stopBGM();
         break;
@@ -1774,7 +1780,7 @@ function handleCollisions() {
       playExplosionSound();
 
       if (player.lives <= 0) {
-        isGameOver = true;
+        gameState = 'gameOver';
         updateHighScore();
         stopBGM();
         break;
@@ -1892,7 +1898,10 @@ function drawPaused() {
   ctx.textAlign = 'left';
 }
 
-function restartGame() {
+function startGame() {
+  titleScreen.style.display = 'none';
+  gameState = 'playing';
+
   stopBGM();
   score = 0;
   comboCount = 0;
@@ -1915,15 +1924,16 @@ function restartGame() {
   enemies.length = 0;
   enemyBullets.length = 0;
   powerUps.length = 0;
-  isGameOver = false;
-  isPaused = false;
-  lastShotTime = 0;
-  lastEnemySpawnTime = 0;
   keys = {};
   gameStartTimestamp = Date.now();
   lastFrameTimestamp = typeof performance !== 'undefined' ? performance.now() : Date.now();
   activeStageIndex = -1; // Force theme reset
   applyStageTheme(0);
+}
+
+function restartGame() {
+  titleScreen.style.display = 'flex';
+  gameState = 'title';
 }
 
 // Initialize high score
