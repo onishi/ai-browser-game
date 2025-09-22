@@ -10,7 +10,7 @@ let currentBgmMode = null;
 function initAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    ensureBGM(currentStageTheme?.bgmMode || 'stage0');
+    ensureBGM(currentStageTheme?.bgmMode || 'stage0', true);
   }
 }
 
@@ -28,7 +28,7 @@ function playShootSound() {
   oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
   oscillator.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.1);
 
-  gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+  gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
   gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
 
   oscillator.start(audioCtx.currentTime);
@@ -51,7 +51,7 @@ function playExplosionSound() {
   noiseSource.buffer = noiseBuffer;
   noiseSource.connect(gainNode);
 
-  gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
   gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
 
   noiseSource.start(audioCtx.currentTime);
@@ -71,11 +71,31 @@ function playPowerUpSound() {
   oscillator.frequency.setValueAtTime(600, audioCtx.currentTime);
   oscillator.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.2);
 
-  gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+  gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
   gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
 
   oscillator.start(audioCtx.currentTime);
   oscillator.stop(audioCtx.currentTime + 0.2);
+}
+
+function playComboUpSound() {
+  if (!audioCtx) return;
+
+  const oscillator = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+
+  const baseFreq = 440 + scoreMultiplier * 50;
+  oscillator.type = 'square';
+  oscillator.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
+  oscillator.frequency.exponentialRampToValueAtTime(baseFreq * 1.5, audioCtx.currentTime + 0.15);
+
+  gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+
+  oscillator.start(audioCtx.currentTime);
+  oscillator.stop(audioCtx.currentTime + 0.15);
 }
 
 const BGM_SETTINGS = {
@@ -113,16 +133,27 @@ const BGM_SETTINGS = {
   }
 };
 
-function startBGM(mode = 'stage0') {
+function fadeBGM(duration, toVolume) {
+  if (bgmNode && bgmNode.gain) {
+    bgmNode.gain.gain.linearRampToValueAtTime(toVolume, audioCtx.currentTime + duration);
+  }
+}
+
+function startBGM(mode = 'stage0', immediate = false) {
   if (!audioCtx) return;
   if (currentBgmMode === mode && bgmNode) return;
 
-  stopBGM();
+  stopBGM(0.1); // Quick fade for transitions
 
   const settings = BGM_SETTINGS[mode] || BGM_SETTINGS.stage0;
   const gainNode = audioCtx.createGain();
-  gainNode.gain.setValueAtTime(settings.volume, audioCtx.currentTime);
+  const initialVolume = immediate ? settings.volume : 0;
+  gainNode.gain.setValueAtTime(initialVolume, audioCtx.currentTime);
   gainNode.connect(audioCtx.destination);
+
+  if (!immediate) {
+    gainNode.gain.linearRampToValueAtTime(settings.volume, audioCtx.currentTime + 1.5);
+  }
 
   const bass = audioCtx.createOscillator();
   bass.type = settings.bassType;
@@ -148,17 +179,21 @@ function startBGM(mode = 'stage0') {
   currentBgmMode = mode;
 }
 
-function ensureBGM(mode = 'stage0') {
+function ensureBGM(mode = 'stage0', immediate = false) {
   if (!audioCtx) return;
-  startBGM(mode);
+  startBGM(mode, immediate);
 }
 
-function stopBGM() {
+function stopBGM(fadeDuration = 0.5) {
   if (bgmNode) {
-    clearInterval(bgmNode.intervalId);
-    bgmNode.bass.stop();
-    bgmNode.lead.stop();
-    bgmNode.gain.disconnect();
+    fadeBGM(fadeDuration, 0);
+    const oldBgmNode = bgmNode;
+    setTimeout(() => {
+      clearInterval(oldBgmNode.intervalId);
+      oldBgmNode.bass.stop();
+      oldBgmNode.lead.stop();
+      oldBgmNode.gain.disconnect();
+    }, fadeDuration * 1000);
     bgmNode = null;
   }
   currentBgmMode = null;
@@ -170,6 +205,7 @@ let keys = {};
 let lastShotTime = 0;
 let isGameOver = false;
 let isPaused = false;
+let hitStopUntil = 0;
 
 // Score combo system
 let comboCount = 0;
@@ -186,6 +222,13 @@ let waveStartTime = 0;
 const ENEMIES_PER_WAVE = 8;
 const WAVE_SPAWN_INTERVAL = 300; // ms between enemies in a wave
 const BREAK_BETWEEN_WAVES = 3000; // ms break between waves
+
+// Announcements
+const announcement = {
+  text: '',
+  displayUntil: 0,
+  fadeDuration: 300
+};
 
 const bullets = [];
 const enemies = [];
@@ -226,15 +269,15 @@ const POWERUP_TYPES = {
   MISSILE: 'missileWeapon'
 };
 
-const POWERUP_DROP_CHANCE = 0.25;
+const POWERUP_DROP_CHANCE = 0.30; // Increased from 0.25
 const POWERUP_FALL_SPEED = 2.5;
 const POWERUP_SIZE = 26;
 
 const POWERUP_DURATION = {
-  [POWERUP_TYPES.RAPID_FIRE]: 6000,
-  [POWERUP_TYPES.SHIELD]: 5000,
-  [POWERUP_TYPES.LASER]: 6000,
-  [POWERUP_TYPES.MISSILE]: 6500
+  [POWERUP_TYPES.RAPID_FIRE]: 7000, // Buffed
+  [POWERUP_TYPES.SHIELD]: 6000, // Buffed
+  [POWERUP_TYPES.LASER]: 7000, // Buffed
+  [POWERUP_TYPES.MISSILE]: 7500 // Buffed
 };
 
 const POWERUP_SPAWN_TABLE = [
@@ -439,6 +482,11 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'p' || e.key === 'P') {
     if (!isGameOver) {
       isPaused = !isPaused;
+      if (isPaused) {
+        if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume * 0.3, audioCtx.currentTime);
+      } else {
+        if (bgmNode) bgmNode.gain.gain.setValueAtTime(BGM_SETTINGS[currentBgmMode].volume, audioCtx.currentTime);
+      }
     }
   }
 
@@ -621,7 +669,6 @@ function handlePowerUpCollection() {
     if (rectsIntersect(bounds, player)) {
       applyPowerUp(powerUp.type);
       powerUps.splice(i, 1);
-      playPowerUpSound();
     }
   }
 }
@@ -705,12 +752,12 @@ function applyPowerUp(type) {
   playPowerUpSound();
 
   if (type === POWERUP_TYPES.RAPID_FIRE) {
-    player.rapidFireUntil = Math.max(player.rapidFireUntil, now + POWERUP_DURATION[POWERUP_TYPES.RAPID_FIRE]);
+    player.rapidFireUntil = Math.max(player.rapidFireUntil, now) + POWERUP_DURATION[POWERUP_TYPES.RAPID_FIRE];
     return;
   }
 
   if (type === POWERUP_TYPES.SHIELD) {
-    player.shieldUntil = Math.max(player.shieldUntil, now + POWERUP_DURATION[POWERUP_TYPES.SHIELD]);
+    player.shieldUntil = Math.max(player.shieldUntil, now) + POWERUP_DURATION[POWERUP_TYPES.SHIELD];
     player.invulnerableUntil = Math.max(player.invulnerableUntil, now + 250);
     return;
   }
@@ -761,6 +808,10 @@ function maybeSpawnPowerUp(enemy) {
 // Game loop
 function gameLoop() {
   const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  if (frameNow < hitStopUntil) {
+    requestAnimationFrame(gameLoop);
+    return;
+  }
   const delta = frameNow - lastFrameTimestamp;
   lastFrameTimestamp = frameNow;
 
@@ -806,6 +857,7 @@ function gameLoop() {
   drawPowerUps();
   drawExplosions();
   drawHUD();
+  drawAnnouncements();
 
   if (isGameOver) {
     drawGameOver();
@@ -910,6 +962,31 @@ function drawBullets() {
   });
 }
 
+function showAnnouncement(text, duration = 2000) {
+  announcement.text = text;
+  announcement.displayUntil = Date.now() + duration;
+}
+
+function drawAnnouncements() {
+  const now = Date.now();
+  if (now >= announcement.displayUntil) {
+    return;
+  }
+
+  const elapsed = announcement.displayUntil - now;
+  const fade = Math.min(1, (announcement.displayUntil - now) / announcement.fadeDuration);
+  const fadeIn = Math.min(1, (2000 - elapsed) / announcement.fadeDuration);
+
+  ctx.font = 'bold 48px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(fadeIn, fade)})`;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+  ctx.shadowBlur = 10;
+  ctx.fillText(announcement.text, canvas.width / 2, canvas.height / 2);
+  ctx.shadowBlur = 0;
+  ctx.textAlign = 'left';
+}
+
 function handleWaveSystem() {
   const now = Date.now();
 
@@ -917,27 +994,23 @@ function handleWaveSystem() {
     return;
   }
 
-  // Start first wave immediately
   if (!isWaveActive && currentWave === 1 && waveStartTime === 0) {
     startNewWave();
     return;
   }
 
-  // Check if current wave is complete
   if (isWaveActive &&
       waveEnemiesDestroyed >= ENEMIES_PER_WAVE &&
-      enemies.every((enemy) => enemy.type === ENEMY_TYPES.BOSS)) {
+      enemies.every((enemy) => enemy.type !== ENEMY_TYPES.BOSS)) {
     completeWave();
     return;
   }
 
-  // Start next wave after break
   if (!isWaveActive && now - waveStartTime >= BREAK_BETWEEN_WAVES) {
     startNewWave();
     return;
   }
 
-  // Spawn enemies during active wave
   if (isWaveActive &&
       waveEnemiesSpawned < ENEMIES_PER_WAVE &&
       now - lastEnemySpawnTime >= WAVE_SPAWN_INTERVAL) {
@@ -954,6 +1027,8 @@ function startNewWave() {
   lastEnemySpawnTime = now;
   isBossPhase = false;
 
+  showAnnouncement(`WAVE ${currentWave}`);
+
   const stageIndex = getStageIndexForWave(currentWave);
   if (stageIndex !== activeStageIndex) {
     activeStageIndex = stageIndex;
@@ -968,9 +1043,10 @@ function completeWave() {
   currentWave++;
   waveStartTime = Date.now();
 
-  // Spawn boss every 3 waves
-  if (currentWave % 3 === 1 && currentWave > 1) {
-    spawnBoss();
+  showAnnouncement('WAVE CLEARED', 1500);
+
+  if ((currentWave - 1) % 3 === 0 && currentWave > 1) {
+    setTimeout(spawnBoss, 1500);
   }
 }
 
@@ -978,6 +1054,12 @@ function spawnBoss() {
   const now = Date.now();
   isBossPhase = true;
   ensureBGM('boss');
+  showAnnouncement('!!! BOSS INCOMING !!!', 2500);
+
+  const bossWave = Math.floor((currentWave -1) / 3);
+  const bossHealth = 5 + bossWave * 2;
+  const bossShootInterval = Math.max(700, 1500 - bossWave * 150);
+
   const boss = {
     x: canvas.width / 2 - 60,
     y: -80,
@@ -986,10 +1068,10 @@ function spawnBoss() {
     speed: 1,
     type: ENEMY_TYPES.BOSS,
     color: 'orange',
-    health: 5,
-    maxHealth: 5,
+    health: bossHealth,
+    maxHealth: bossHealth,
     lastShot: 0,
-    shootInterval: 1500,
+    shootInterval: bossShootInterval,
     moveDirection: 1,
     moveTimer: 0,
     spawnedAt: now
@@ -1109,7 +1191,6 @@ function updateEnemies() {
 function updateBoss(boss) {
   const now = Date.now();
 
-  // Move boss horizontally
   boss.moveTimer += 1;
   if (boss.moveTimer % 60 === 0) {
     boss.moveDirection *= -1;
@@ -1121,16 +1202,13 @@ function updateBoss(boss) {
     boss.x = Math.max(0, Math.min(canvas.width - boss.width, boss.x));
   }
 
-  // Move down slowly
   if (boss.y < 50) {
     boss.y += boss.speed;
   }
 
-  // Boss shooting
   if (now - boss.lastShot >= boss.shootInterval) {
     boss.lastShot = now;
 
-    // Shoot 3 bullets in spread pattern
     for (let i = -1; i <= 1; i++) {
       enemyBullets.push({
         type: 'spread',
@@ -1216,7 +1294,6 @@ function drawEnemies() {
     const centerY = enemy.y + enemy.height / 2;
 
     if (enemy.type === ENEMY_TYPES.BOSS) {
-      // Draw boss as large octagon
       ctx.beginPath();
       const sides = 8;
       const radius = enemy.width / 2;
@@ -1230,12 +1307,10 @@ function drawEnemies() {
       ctx.closePath();
       ctx.fill();
 
-      // Boss outline
       ctx.strokeStyle = '#cc6600';
       ctx.lineWidth = 3;
       ctx.stroke();
 
-      // Health bar
       const barWidth = enemy.width * 0.8;
       const barHeight = 6;
       const barX = enemy.x + (enemy.width - barWidth) / 2;
@@ -1337,14 +1412,10 @@ function resetCombo() {
 
 function registerKill(comboBonus = 1) {
   comboCount += comboBonus;
-  while (comboCount >= COMBO_THRESHOLD) {
-    if (scoreMultiplier < MAX_MULTIPLIER) {
-      scoreMultiplier++;
-      comboCount -= COMBO_THRESHOLD;
-    } else {
-      comboCount = COMBO_THRESHOLD - 1;
-      break;
-    }
+  if (scoreMultiplier < MAX_MULTIPLIER && comboCount >= COMBO_THRESHOLD) {
+    scoreMultiplier++;
+    comboCount -= COMBO_THRESHOLD;
+    playComboUpSound();
   }
 }
 
@@ -1396,6 +1467,7 @@ function triggerMissileExplosion(centerX, centerY, { excludeIndex = null } = {})
     if (distance <= MISSILE_EXPLOSION_RADIUS) {
       if (enemy.type === ENEMY_TYPES.BOSS) {
         enemy.health -= 2;
+        hitStopUntil = Date.now() + 25;
         if (enemy.health <= 0) {
           handleBossDefeat(enemy, idx);
         }
@@ -1429,6 +1501,8 @@ function handleCollisions() {
       const bulletType = bullet.type || 'normal';
 
       if (rectsIntersect(enemy, bullet)) {
+        hitStopUntil = Date.now() + 20;
+
         if (bulletType === 'missile') {
           bullets.splice(j, 1);
 
@@ -1473,7 +1547,6 @@ function handleCollisions() {
           continue;
         }
 
-        // Default projectile
         bullets.splice(j, 1);
 
         if (enemy.type === ENEMY_TYPES.BOSS) {
@@ -1499,6 +1572,7 @@ function handleCollisions() {
       if (isShieldActive()) {
         enemies.splice(i, 1);
         onEnemyDestroyed(enemy, { baseScore: 120, comboBonus: 1 });
+        hitStopUntil = Date.now() + 40;
         continue;
       }
 
@@ -1510,6 +1584,7 @@ function handleCollisions() {
       player.lives -= 1;
       player.invulnerableUntil = now + PLAYER_INVULNERABLE_TIME;
       resetCombo();
+      hitStopUntil = Date.now() + 80;
 
       playExplosionSound();
 
@@ -1521,7 +1596,6 @@ function handleCollisions() {
     }
   }
 
-  // Check enemy bullet vs player collisions
   for (let i = enemyBullets.length - 1; i >= 0; i--) {
     const bullet = enemyBullets[i];
 
@@ -1540,6 +1614,7 @@ function handleCollisions() {
       player.invulnerableUntil = Date.now() + PLAYER_INVULNERABLE_TIME;
 
       resetCombo();
+      hitStopUntil = Date.now() + 80;
 
       playExplosionSound();
 
@@ -1559,18 +1634,16 @@ function drawHUD() {
 
   ctx.fillText(`Lives: ${player.lives}`, 10, 60);
 
-  // Show wave info
   ctx.fillStyle = '#88cc88';
   if (isBossPhase) {
     ctx.fillText(`Boss Battle`, 10, 90);
   } else if (isWaveActive) {
     ctx.fillText(`Wave ${currentWave} - ${waveEnemiesDestroyed}/${ENEMIES_PER_WAVE}`, 10, 90);
-  } else {
+  } else if (currentWave > 1) {
     const timeLeft = Math.max(0, BREAK_BETWEEN_WAVES - (Date.now() - waveStartTime));
     ctx.fillText(`Next Wave in ${(timeLeft / 1000).toFixed(1)}s`, 10, 90);
   }
 
-  // Show combo multiplier
   let statusY = 120;
   if (scoreMultiplier > 1) {
     ctx.fillStyle = '#ffdd44';
@@ -1663,9 +1736,10 @@ function restartGame() {
   keys = {};
   gameStartTimestamp = Date.now();
   lastFrameTimestamp = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  activeStageIndex = 0;
-  applyStageTheme(activeStageIndex);
+  activeStageIndex = -1; // Force theme reset
+  applyStageTheme(0);
 }
+
 applyStageTheme(0);
 
 gameLoop();
