@@ -5,6 +5,7 @@ const ctx = canvas.getContext('2d');
 let score = 0;
 let keys = {};
 let lastShotTime = 0;
+let isGameOver = false;
 
 const bullets = [];
 const enemies = [];
@@ -31,10 +32,16 @@ const player = {
   speed: 5
 };
 
+const initialPlayerState = { ...player };
+
 // Input handling
 document.addEventListener('keydown', (e) => {
   keys[e.key] = true;
   keys[e.code] = true;
+
+  if (isGameOver && (e.key === 'r' || e.key === 'R')) {
+    restartGame();
+  }
 });
 
 document.addEventListener('keyup', (e) => {
@@ -88,30 +95,32 @@ function updateBullets() {
 
 // Game loop
 function gameLoop() {
-  // Clear canvas
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Update game state
-  updatePlayer();
-  handleShooting();
-  updateBullets();
-  handleEnemySpawning();
-  updateEnemies();
-  handleCollisions();
+  if (!isGameOver) {
+    // Update game state
+    updatePlayer();
+    handleShooting();
+    updateBullets();
+    handleEnemySpawning();
+    updateEnemies();
+    handleCollisions();
 
-  // Draw player
-  ctx.fillStyle = player.color;
-  ctx.fillRect(player.x, player.y, player.width, player.height);
-
-  // Draw bullets
-  drawBullets();
-
-  // Draw enemies
-  drawEnemies();
-
-  drawHUD();
+    // Draw everything
+    drawPlayer();
+    drawBullets();
+    drawEnemies();
+    drawHUD();
+  } else {
+    drawGameOver();
+  }
 
   requestAnimationFrame(gameLoop);
+}
+
+function drawPlayer() {
+  ctx.fillStyle = player.color;
+  ctx.fillRect(player.x, player.y, player.width, player.height);
 }
 
 function drawBullets() {
@@ -188,8 +197,10 @@ function handleCollisions() {
       continue;
     }
 
+    // Player vs enemy
     if (rectsIntersect(enemy, player)) {
-      enemies.splice(i, 1);
+      isGameOver = true;
+      break; // End collision check for this frame
     }
   }
 }
@@ -198,6 +209,34 @@ function drawHUD() {
   ctx.fillStyle = '#000';
   ctx.font = '20px sans-serif';
   ctx.fillText(`Score: ${score}`, 10, 30);
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = 'white';
+  ctx.font = '60px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 40);
+
+  ctx.font = '24px sans-serif';
+  ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
+
+  ctx.font = '20px sans-serif';
+  ctx.fillText("Press 'R' to Restart", canvas.width / 2, canvas.height / 2 + 70);
+  ctx.textAlign = 'left'; // Reset alignment
+}
+
+function restartGame() {
+  score = 0;
+  player.x = initialPlayerState.x;
+  player.y = initialPlayerState.y;
+  bullets.length = 0;
+  enemies.length = 0;
+  isGameOver = false;
+  lastShotTime = 0;
+  lastEnemySpawnTime = 0;
 }
 
 // Start the game loop
