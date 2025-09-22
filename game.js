@@ -201,6 +201,26 @@ function stopBGM(fadeDuration = 0.5) {
 
 // Game state
 let score = 0;
+let highScore = 0;
+
+// High score functions
+function loadHighScore() {
+  const saved = localStorage.getItem('shooterHighScore');
+  return saved ? parseInt(saved, 10) : 0;
+}
+
+function saveHighScore(newScore) {
+  localStorage.setItem('shooterHighScore', newScore.toString());
+}
+
+function updateHighScore() {
+  if (score > highScore) {
+    highScore = score;
+    saveHighScore(highScore);
+    return true; // New high score achieved
+  }
+  return false;
+}
 let keys = {};
 let lastShotTime = 0;
 let isGameOver = false;
@@ -453,7 +473,15 @@ function getElapsedSeconds() {
 function getDifficultyLevel() {
   const elapsed = getElapsedSeconds();
   const scoreFactor = Math.min(score / 2500, 1.5);
-  return 1 + elapsed / 45 + scoreFactor * 0.8;
+  let level = 1 + elapsed / 45 + scoreFactor * 0.8;
+
+  // Endless mode: Additional scaling after wave 9
+  if (currentWave > 9) {
+    const endlessWaves = currentWave - 9;
+    level += endlessWaves * 0.3; // Rapidly increasing difficulty
+  }
+
+  return level;
 }
 
 function getCurrentSpawnInterval() {
@@ -1043,7 +1071,15 @@ function completeWave() {
   currentWave++;
   waveStartTime = Date.now();
 
-  showAnnouncement('WAVE CLEARED', 1500);
+  if (currentWave === 9) {
+    showAnnouncement('WAVE CLEARED - PREPARE FOR FINAL BOSS!', 2000);
+  } else if (currentWave === 10) {
+    showAnnouncement('FINAL BOSS DEFEATED - ENTERING ENDLESS MODE!', 3000);
+  } else if (currentWave > 9) {
+    showAnnouncement(`ENDLESS WAVE ${currentWave} CLEARED`, 1500);
+  } else {
+    showAnnouncement('WAVE CLEARED', 1500);
+  }
 
   if ((currentWave - 1) % 3 === 0 && currentWave > 1) {
     setTimeout(spawnBoss, 1500);
@@ -1054,24 +1090,46 @@ function spawnBoss() {
   const now = Date.now();
   isBossPhase = true;
   ensureBGM('boss');
-  showAnnouncement('!!! BOSS INCOMING !!!', 2500);
 
   const bossWave = Math.floor((currentWave -1) / 3);
-  const bossHealth = 5 + bossWave * 2;
-  const bossShootInterval = Math.max(700, 1500 - bossWave * 150);
+  const isFinalBoss = currentWave === 9;
+
+  if (isFinalBoss) {
+    showAnnouncement('!!! FINAL BOSS !!!', 3000);
+  } else {
+    showAnnouncement('!!! BOSS INCOMING !!!', 2500);
+  }
+
+  // Enhanced stats for final boss and endless mode
+  let bossHealth, bossShootInterval;
+
+  if (isFinalBoss) {
+    bossHealth = 20;
+    bossShootInterval = 400;
+  } else if (currentWave > 9) {
+    // Endless mode bosses: scaling difficulty
+    const endlessWaves = currentWave - 9;
+    bossHealth = 15 + endlessWaves * 3; // Rapidly increasing health
+    bossShootInterval = Math.max(300, 600 - endlessWaves * 50); // Faster shooting
+  } else {
+    // Regular bosses
+    bossHealth = 5 + bossWave * 2;
+    bossShootInterval = Math.max(700, 1500 - bossWave * 150);
+  }
 
   const boss = {
-    x: canvas.width / 2 - 60,
+    x: canvas.width / 2 - (isFinalBoss ? 80 : 60),
     y: -80,
-    width: 120,
-    height: 80,
-    speed: 1,
+    width: isFinalBoss ? 160 : 120,
+    height: isFinalBoss ? 100 : 80,
+    speed: isFinalBoss ? 0.5 : 1,
     type: ENEMY_TYPES.BOSS,
-    color: 'orange',
+    color: isFinalBoss ? '#cc0066' : 'orange', // Magenta for final boss
     health: bossHealth,
     maxHealth: bossHealth,
     lastShot: 0,
     shootInterval: bossShootInterval,
+    isFinalBoss: isFinalBoss,
     moveDirection: 1,
     moveTimer: 0,
     spawnedAt: now
@@ -1209,17 +1267,52 @@ function updateBoss(boss) {
   if (now - boss.lastShot >= boss.shootInterval) {
     boss.lastShot = now;
 
-    for (let i = -1; i <= 1; i++) {
-      enemyBullets.push({
-        type: 'spread',
-        x: boss.x + boss.width / 2 - 3,
-        y: boss.y + boss.height,
-        width: 6,
-        height: 8,
-        speed: 3,
-        direction: i * 0.3,
-        color: 'red'
-      });
+    if (boss.isFinalBoss) {
+      // Final boss: 5-way spread with homing missiles
+      for (let i = -2; i <= 2; i++) {
+        enemyBullets.push({
+          type: 'spread',
+          x: boss.x + boss.width / 2 - 3,
+          y: boss.y + boss.height,
+          width: 6,
+          height: 8,
+          speed: 3.5,
+          direction: i * 0.4,
+          color: '#ff0066'
+        });
+      }
+
+      // Add homing missiles every other shot
+      if (Math.random() < 0.6) {
+        for (let i = -1; i <= 1; i += 2) {
+          enemyBullets.push({
+            type: 'homing',
+            x: boss.x + boss.width / 2 + i * 30 - 4,
+            y: boss.y + boss.height,
+            width: 8,
+            height: 12,
+            speed: 2.5,
+            vx: i * 0.5,
+            vy: 1,
+            turnRate: 0.08,
+            color: '#ff3399'
+          });
+        }
+      }
+    } else {
+      // Regular boss: 3-way spread
+      for (let i = -1; i <= 1; i++) {
+        enemyBullets.push({
+          type: 'spread',
+          x: boss.x + boss.width / 2 - 3,
+          y: boss.y + boss.height,
+          width: 6,
+          height: 8,
+          speed: 3,
+          direction: i * 0.3,
+          color: 'red'
+        });
+      }
     }
   }
 }
@@ -1294,22 +1387,50 @@ function drawEnemies() {
     const centerY = enemy.y + enemy.height / 2;
 
     if (enemy.type === ENEMY_TYPES.BOSS) {
-      ctx.beginPath();
-      const sides = 8;
-      const radius = enemy.width / 2;
-      for (let i = 0; i < sides; i++) {
-        const angle = (i * 2 * Math.PI) / sides;
-        const x = centerX + Math.cos(angle) * radius;
-        const y = centerY + Math.sin(angle) * (radius * 0.6);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.fill();
+      // Enhanced design for final boss
+      if (enemy.isFinalBoss) {
+        // Outer ring for final boss
+        ctx.beginPath();
+        const outerSides = 12;
+        const outerRadius = enemy.width / 2;
+        for (let i = 0; i < outerSides; i++) {
+          const angle = (i * 2 * Math.PI) / outerSides;
+          const x = centerX + Math.cos(angle) * outerRadius;
+          const y = centerY + Math.sin(angle) * (outerRadius * 0.7);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
 
-      ctx.strokeStyle = '#cc6600';
-      ctx.lineWidth = 3;
-      ctx.stroke();
+        // Inner core for final boss
+        ctx.fillStyle = '#ff0099';
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, outerRadius * 0.4, 0, 2 * Math.PI);
+        ctx.fill();
+
+        ctx.strokeStyle = '#990033';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      } else {
+        // Regular boss design
+        ctx.beginPath();
+        const sides = 8;
+        const radius = enemy.width / 2;
+        for (let i = 0; i < sides; i++) {
+          const angle = (i * 2 * Math.PI) / sides;
+          const x = centerX + Math.cos(angle) * radius;
+          const y = centerY + Math.sin(angle) * (radius * 0.6);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = '#cc6600';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
 
       const barWidth = enemy.width * 0.8;
       const barHeight = 6;
@@ -1590,6 +1711,7 @@ function handleCollisions() {
 
       if (player.lives <= 0) {
         isGameOver = true;
+        updateHighScore();
         stopBGM();
         break;
       }
@@ -1620,6 +1742,7 @@ function handleCollisions() {
 
       if (player.lives <= 0) {
         isGameOver = true;
+        updateHighScore();
         stopBGM();
         break;
       }
@@ -1636,12 +1759,30 @@ function drawHUD() {
 
   ctx.fillStyle = '#88cc88';
   if (isBossPhase) {
-    ctx.fillText(`Boss Battle`, 10, 90);
+    if (currentWave === 9) {
+      ctx.fillStyle = '#ff6699';
+      ctx.fillText(`FINAL BOSS BATTLE`, 10, 90);
+    } else if (currentWave > 9) {
+      ctx.fillStyle = '#ff3366';
+      ctx.fillText(`ENDLESS BOSS - Wave ${currentWave}`, 10, 90);
+    } else {
+      ctx.fillText(`Boss Battle`, 10, 90);
+    }
   } else if (isWaveActive) {
-    ctx.fillText(`Wave ${currentWave} - ${waveEnemiesDestroyed}/${ENEMIES_PER_WAVE}`, 10, 90);
+    if (currentWave > 9) {
+      ctx.fillStyle = '#ff9933';
+      ctx.fillText(`ENDLESS Wave ${currentWave} - ${waveEnemiesDestroyed}/${ENEMIES_PER_WAVE}`, 10, 90);
+    } else {
+      ctx.fillText(`Wave ${currentWave} - ${waveEnemiesDestroyed}/${ENEMIES_PER_WAVE}`, 10, 90);
+    }
   } else if (currentWave > 1) {
     const timeLeft = Math.max(0, BREAK_BETWEEN_WAVES - (Date.now() - waveStartTime));
-    ctx.fillText(`Next Wave in ${(timeLeft / 1000).toFixed(1)}s`, 10, 90);
+    if (currentWave > 9) {
+      ctx.fillStyle = '#ff9933';
+      ctx.fillText(`ENDLESS - Next Wave in ${(timeLeft / 1000).toFixed(1)}s`, 10, 90);
+    } else {
+      ctx.fillText(`Next Wave in ${(timeLeft / 1000).toFixed(1)}s`, 10, 90);
+    }
   }
 
   let statusY = 120;
@@ -1685,13 +1826,22 @@ function drawGameOver() {
   ctx.fillStyle = 'white';
   ctx.font = '60px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 40);
+  ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 60);
 
   ctx.font = '24px sans-serif';
-  ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
+  ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2);
+
+  // Show high score
+  if (score === highScore && score > 0) {
+    ctx.fillStyle = '#FFD700'; // Gold color for new high score
+    ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height / 2 + 30);
+    ctx.fillStyle = 'white';
+  } else {
+    ctx.fillText(`High Score: ${highScore}`, canvas.width / 2, canvas.height / 2 + 30);
+  }
 
   ctx.font = '20px sans-serif';
-  ctx.fillText("Press 'R' to Restart", canvas.width / 2, canvas.height / 2 + 70);
+  ctx.fillText("Press 'R' to Restart", canvas.width / 2, canvas.height / 2 + 80);
   ctx.textAlign = 'left';
 }
 
@@ -1739,6 +1889,9 @@ function restartGame() {
   activeStageIndex = -1; // Force theme reset
   applyStageTheme(0);
 }
+
+// Initialize high score
+highScore = loadHighScore();
 
 applyStageTheme(0);
 
