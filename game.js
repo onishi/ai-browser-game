@@ -3,11 +3,13 @@ const ctx = canvas.getContext('2d');
 
 // Audio context for sound effects
 let audioCtx = null;
+let bgmNode = null; // To hold the BGM oscillator
 
 // Initialize audio context (needs user interaction)
 function initAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    startBGM();
   }
 }
 
@@ -21,10 +23,11 @@ function playShootSound() {
   oscillator.connect(gainNode);
   gainNode.connect(audioCtx.destination);
 
+  oscillator.type = 'triangle';
   oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
   oscillator.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.1);
 
-  gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
   gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
 
   oscillator.start(audioCtx.currentTime);
@@ -35,26 +38,90 @@ function playShootSound() {
 function playExplosionSound() {
   if (!audioCtx) return;
 
-  const oscillator = audioCtx.createOscillator();
   const gainNode = audioCtx.createGain();
-  const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.3, audioCtx.sampleRate);
-  const noiseSource = audioCtx.createBufferSource();
+  gainNode.connect(audioCtx.destination);
 
-  // Create noise
+  const noiseSource = audioCtx.createBufferSource();
+  const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.3, audioCtx.sampleRate);
   const output = noiseBuffer.getChannelData(0);
   for (let i = 0; i < output.length; i++) {
     output[i] = Math.random() * 2 - 1;
   }
-
   noiseSource.buffer = noiseBuffer;
   noiseSource.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
 
-  gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+  gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
   gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
 
   noiseSource.start(audioCtx.currentTime);
   noiseSource.stop(audioCtx.currentTime + 0.3);
+}
+
+// Generate power-up sound
+function playPowerUpSound() {
+  if (!audioCtx) return;
+
+  const oscillator = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(600, audioCtx.currentTime);
+  oscillator.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.2);
+
+  gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+
+  oscillator.start(audioCtx.currentTime);
+  oscillator.stop(audioCtx.currentTime + 0.2);
+}
+
+// Procedural BGM
+function startBGM() {
+  if (!audioCtx || bgmNode) return;
+
+  const gainNode = audioCtx.createGain();
+  gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+  gainNode.connect(audioCtx.destination);
+
+  bgmNode = {
+    bass: audioCtx.createOscillator(),
+    lead: audioCtx.createOscillator(),
+    gain: gainNode,
+    intervalId: null
+  };
+
+  // Bassline
+  bgmNode.bass.type = 'sine';
+  bgmNode.bass.frequency.value = 55; // A1
+  bgmNode.bass.connect(gainNode);
+  bgmNode.bass.start();
+
+  // Lead melody
+  bgmNode.lead.type = 'triangle';
+  bgmNode.lead.connect(gainNode);
+  bgmNode.lead.start();
+
+  const melody = [330, 392, 440, 392, 494, 440, 392, 330]; // E4, G4, A4, G4, B4, A4, G4, E4
+  let noteIndex = 0;
+
+  bgmNode.intervalId = setInterval(() => {
+    const freq = melody[noteIndex % melody.length];
+    bgmNode.lead.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    bgmNode.bass.frequency.setValueAtTime(freq / 4, audioCtx.currentTime);
+    noteIndex++;
+  }, 400);
+}
+
+function stopBGM() {
+  if (bgmNode) {
+    clearInterval(bgmNode.intervalId);
+    bgmNode.bass.stop();
+    bgmNode.lead.stop();
+    bgmNode.gain.disconnect();
+    bgmNode = null;
+  }
 }
 
 // Game state
@@ -62,6 +129,7 @@ let score = 0;
 let keys = {};
 let lastShotTime = 0;
 let isGameOver = false;
+let isPaused = false;
 
 const bullets = [];
 const enemies = [];
@@ -206,11 +274,16 @@ function getZigzagHorizontalSpeed(level) {
 
 // Input handling
 document.addEventListener('keydown', (e) => {
-  // Initialize audio on first user interaction
   initAudio();
 
   keys[e.key] = true;
   keys[e.code] = true;
+
+  if (e.key === 'p' || e.key === 'P') {
+    if (!isGameOver) {
+      isPaused = !isPaused;
+    }
+  }
 
   if (isGameOver && (e.key === 'r' || e.key === 'R')) {
     restartGame();
@@ -293,6 +366,7 @@ function handlePowerUpCollection() {
     if (rectsIntersect(bounds, player)) {
       applyPowerUp(powerUp.type);
       powerUps.splice(i, 1);
+      playPowerUpSound();
     }
   }
 }
@@ -394,6 +468,18 @@ function gameLoop() {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  if (isPaused) {
+    drawStars();
+    drawPlayer();
+    drawBullets();
+    drawEnemies();
+    drawPowerUps();
+    drawHUD();
+    drawPaused();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+
   updateStars(delta);
   drawStars();
 
@@ -428,21 +514,17 @@ function drawPlayer() {
     return;
   }
 
-  // Draw a simple spaceship shape using triangles
-  ctx.fillStyle = player.color;
-
   const centerX = player.x + player.width / 2;
   const centerY = player.y + player.height / 2;
 
-  // Main body (triangle pointing up)
+  ctx.fillStyle = player.color;
   ctx.beginPath();
-  ctx.moveTo(centerX, player.y); // Top point
-  ctx.lineTo(player.x + 10, player.y + player.height); // Bottom left
-  ctx.lineTo(player.x + player.width - 10, player.y + player.height); // Bottom right
+  ctx.moveTo(centerX, player.y);
+  ctx.lineTo(player.x + 10, player.y + player.height);
+  ctx.lineTo(player.x + player.width - 10, player.y + player.height);
   ctx.closePath();
   ctx.fill();
 
-  // Wings
   ctx.fillStyle = '#0066cc';
   ctx.beginPath();
   ctx.moveTo(player.x, player.y + player.height - 15);
@@ -459,31 +541,33 @@ function drawPlayer() {
   ctx.fill();
 
   if (isShieldActive()) {
-    ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
-    ctx.lineWidth = 3;
+    const shieldRadius = player.width * (0.8 + Math.sin(now / 200) * 0.1);
+    const gradient = ctx.createRadialGradient(centerX, centerY, shieldRadius * 0.7, centerX, centerY, shieldRadius);
+    gradient.addColorStop(0, 'rgba(0, 255, 255, 0)');
+    gradient.addColorStop(0.8, 'rgba(0, 255, 255, 0.5)');
+    gradient.addColorStop(1, 'rgba(128, 255, 255, 0.8)');
+
+    ctx.fillStyle = gradient;
     ctx.beginPath();
-    ctx.arc(centerX, centerY, player.width, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.arc(centerX, centerY, shieldRadius, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
 function drawBullets() {
   bullets.forEach((bullet) => {
-    // Draw bullets as glowing circles
     const centerX = bullet.x + bullet.width / 2;
     const centerY = bullet.y + bullet.height / 2;
     const radius = bullet.width / 2;
 
-    // Outer glow
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, radius + 2, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 255, 0, 0.3)';
-    ctx.fill();
+    const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius + 2);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 0, 0.5)');
+    gradient.addColorStop(1, 'rgba(255, 200, 0, 0)');
 
-    // Inner bullet
+    ctx.fillStyle = gradient;
     ctx.beginPath();
-    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-    ctx.fillStyle = bullet.color;
+    ctx.arc(centerX, centerY, radius + 3, 0, Math.PI * 2);
     ctx.fill();
   });
 }
@@ -523,29 +607,23 @@ function updateEnemies() {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const enemy = enemies[i];
 
-    // Move enemy down
     enemy.y += enemy.speed;
 
-    // Handle different enemy types
     if (enemy.type === ENEMY_TYPES.ZIGZAG) {
       enemy.zigzagTimer += 1;
 
-      // Change direction every 30 frames (approximately 0.5 seconds at 60fps)
       if (enemy.zigzagTimer % 30 === 0) {
         enemy.zigzagDirection *= -1;
       }
 
-      // Move horizontally
       enemy.x += enemy.zigzagDirection * enemy.horizontalSpeed;
 
-      // Keep enemy within screen bounds
       if (enemy.x <= 0 || enemy.x >= canvas.width - enemy.width) {
         enemy.zigzagDirection *= -1;
         enemy.x = Math.max(0, Math.min(canvas.width - enemy.width, enemy.x));
       }
     }
 
-    // Remove enemies that are off screen
     if (enemy.y > canvas.height) {
       enemies.splice(i, 1);
     }
@@ -554,41 +632,36 @@ function updateEnemies() {
 
 function drawEnemies() {
   enemies.forEach((enemy) => {
-    // Draw enemies as menacing shapes
     ctx.fillStyle = enemy.color;
 
     const centerX = enemy.x + enemy.width / 2;
     const centerY = enemy.y + enemy.height / 2;
 
     if (enemy.type === ENEMY_TYPES.ZIGZAG) {
-      // Draw zigzag enemies as diamonds
       ctx.beginPath();
-      ctx.moveTo(centerX, enemy.y); // Top
-      ctx.lineTo(enemy.x + enemy.width, centerY); // Right
-      ctx.lineTo(centerX, enemy.y + enemy.height); // Bottom
-      ctx.lineTo(enemy.x, centerY); // Left
+      ctx.moveTo(centerX, enemy.y);
+      ctx.lineTo(enemy.x + enemy.width, centerY);
+      ctx.lineTo(centerX, enemy.y + enemy.height);
+      ctx.lineTo(enemy.x, centerY);
       ctx.closePath();
       ctx.fill();
 
-      // Distinct outline for zigzag enemies
       ctx.strokeStyle = '#4a0080';
       ctx.lineWidth = 2;
       ctx.stroke();
     } else {
-      // Main body (hexagon-like shape) for normal enemies
       ctx.beginPath();
-      ctx.moveTo(centerX, enemy.y); // Top
-      ctx.lineTo(enemy.x + enemy.width - 5, enemy.y + 10); // Top right
-      ctx.lineTo(enemy.x + enemy.width, centerY); // Middle right
-      ctx.lineTo(enemy.x + enemy.width - 5, enemy.y + enemy.height - 10); // Bottom right
-      ctx.lineTo(centerX, enemy.y + enemy.height); // Bottom
-      ctx.lineTo(enemy.x + 5, enemy.y + enemy.height - 10); // Bottom left
-      ctx.lineTo(enemy.x, centerY); // Middle left
-      ctx.lineTo(enemy.x + 5, enemy.y + 10); // Top left
+      ctx.moveTo(centerX, enemy.y);
+      ctx.lineTo(enemy.x + enemy.width - 5, enemy.y + 10);
+      ctx.lineTo(enemy.x + enemy.width, centerY);
+      ctx.lineTo(enemy.x + enemy.width - 5, enemy.y + enemy.height - 10);
+      ctx.lineTo(centerX, enemy.y + enemy.height);
+      ctx.lineTo(enemy.x + 5, enemy.y + enemy.height - 10);
+      ctx.lineTo(enemy.x, centerY);
+      ctx.lineTo(enemy.x + 5, enemy.y + 10);
       ctx.closePath();
       ctx.fill();
 
-      // Dark outline
       ctx.strokeStyle = '#800000';
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -608,7 +681,6 @@ function rectsIntersect(a, b) {
 function handleCollisions() {
   const now = Date.now();
 
-  // Bullet vs enemy
   for (let i = enemies.length - 1; i >= 0; i--) {
     const enemy = enemies[i];
     let enemyDestroyed = false;
@@ -631,7 +703,6 @@ function handleCollisions() {
       continue;
     }
 
-    // Player vs enemy
     if (rectsIntersect(enemy, player)) {
       if (isShieldActive()) {
         enemies.splice(i, 1);
@@ -647,9 +718,11 @@ function handleCollisions() {
       enemies.splice(i, 1);
       player.lives -= 1;
       player.invulnerableUntil = now + PLAYER_INVULNERABLE_TIME;
+      playExplosionSound(); // Play sound on player hit
 
       if (player.lives <= 0) {
         isGameOver = true;
+        stopBGM();
         break;
       }
     }
@@ -697,10 +770,22 @@ function drawGameOver() {
 
   ctx.font = '20px sans-serif';
   ctx.fillText("Press 'R' to Restart", canvas.width / 2, canvas.height / 2 + 70);
-  ctx.textAlign = 'left'; // Reset alignment
+  ctx.textAlign = 'left';
+}
+
+function drawPaused() {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = 'white';
+  ctx.font = '50px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('PAUSED', canvas.width / 2, canvas.height / 2);
+  ctx.textAlign = 'left';
 }
 
 function restartGame() {
+  stopBGM();
   score = 0;
   player.x = initialPlayerState.x;
   player.y = initialPlayerState.y;
@@ -712,14 +797,15 @@ function restartGame() {
   enemies.length = 0;
   powerUps.length = 0;
   isGameOver = false;
+  isPaused = false;
   lastShotTime = 0;
   lastEnemySpawnTime = 0;
   keys = {};
   gameStartTimestamp = Date.now();
   lastFrameTimestamp = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  startBGM();
 }
 
 initStars();
 
-// Start the game loop
 gameLoop();
