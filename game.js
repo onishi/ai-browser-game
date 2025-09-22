@@ -39,23 +39,27 @@ function playShootSound() {
 function playExplosionSound() {
   if (!audioCtx) return;
 
-  const gainNode = audioCtx.createGain();
-  gainNode.connect(audioCtx.destination);
+  try {
+    const gainNode = audioCtx.createGain();
+    gainNode.connect(audioCtx.destination);
 
-  const noiseSource = audioCtx.createBufferSource();
-  const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.3, audioCtx.sampleRate);
-  const output = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < output.length; i++) {
-    output[i] = Math.random() * 2 - 1;
+    const noiseSource = audioCtx.createBufferSource();
+    const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.3, audioCtx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < output.length; i++) {
+      output[i] = Math.random() * 2 - 1;
+    }
+    noiseSource.buffer = noiseBuffer;
+    noiseSource.connect(gainNode);
+
+    gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+
+    noiseSource.start(audioCtx.currentTime);
+    noiseSource.stop(audioCtx.currentTime + 0.3);
+  } catch (error) {
+    console.error('Error in playExplosionSound:', error);
   }
-  noiseSource.buffer = noiseBuffer;
-  noiseSource.connect(gainNode);
-
-  gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
-
-  noiseSource.start(audioCtx.currentTime);
-  noiseSource.stop(audioCtx.currentTime + 0.3);
 }
 
 // Generate power-up sound
@@ -81,21 +85,26 @@ function playPowerUpSound() {
 function playComboUpSound() {
   if (!audioCtx) return;
 
-  const oscillator = audioCtx.createOscillator();
-  const gainNode = audioCtx.createGain();
-  oscillator.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+  try {
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
 
-  const baseFreq = 440 + scoreMultiplier * 50;
-  oscillator.type = 'square';
-  oscillator.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
-  oscillator.frequency.exponentialRampToValueAtTime(baseFreq * 1.5, audioCtx.currentTime + 0.15);
+    const safeMultiplier = scoreMultiplier || 1;
+    const baseFreq = 440 + safeMultiplier * 50;
+    oscillator.type = 'square';
+    oscillator.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(baseFreq * 1.5, audioCtx.currentTime + 0.15);
 
-  gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+    gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
 
-  oscillator.start(audioCtx.currentTime);
-  oscillator.stop(audioCtx.currentTime + 0.15);
+    oscillator.start(audioCtx.currentTime);
+    oscillator.stop(audioCtx.currentTime + 0.15);
+  } catch (error) {
+    console.error('Error in playComboUpSound:', error);
+  }
 }
 
 const BGM_SETTINGS = {
@@ -1541,17 +1550,22 @@ function registerKill(comboBonus = 1) {
 }
 
 function onEnemyDestroyed(enemy, { baseScore = 100, comboBonus = 1, allowDrops = true, playSound = true } = {}) {
-  const earnedScore = baseScore * scoreMultiplier;
-  score += Math.round(earnedScore);
-  registerKill(comboBonus);
-  if (playSound) {
-    playExplosionSound();
-  }
-  if (allowDrops) {
-    maybeSpawnPowerUp(enemy);
-  }
-  if (enemy.type !== ENEMY_TYPES.BOSS && isWaveActive) {
-    waveEnemiesDestroyed = Math.min(ENEMIES_PER_WAVE, waveEnemiesDestroyed + 1);
+  try {
+    const earnedScore = baseScore * scoreMultiplier;
+    score += Math.round(earnedScore);
+    registerKill(comboBonus);
+    if (playSound) {
+      playExplosionSound();
+    }
+    if (allowDrops) {
+      maybeSpawnPowerUp(enemy);
+    }
+    if (enemy.type !== ENEMY_TYPES.BOSS && isWaveActive) {
+      waveEnemiesDestroyed = Math.min(ENEMIES_PER_WAVE, waveEnemiesDestroyed + 1);
+    }
+  } catch (error) {
+    console.error('Error in onEnemyDestroyed:', error);
+    // Continue game execution even if there's an error
   }
 }
 
